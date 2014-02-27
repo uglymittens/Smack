@@ -73,7 +73,6 @@ public class XMPPConnection extends Connection {
 
     String connectionID = null;
     private String user = null;
-	private ConnectionConfiguration connConfig = null;
     private boolean connected = false;
     // socketClosed is used concurrent
     // by XMPPConnection, PacketReader, PacketWriter
@@ -166,7 +165,6 @@ public class XMPPConnection extends Connection {
      */
     public XMPPConnection(ConnectionConfiguration config) {
         super(config);
-		connConfig = config;
     }
 
     /**
@@ -193,7 +191,7 @@ public class XMPPConnection extends Connection {
     }
 	
 	public ConnectionConfiguration getConfig() {
-		return connConfig;
+		return null;
 	}
 
     public String getConnectionID() {
@@ -281,12 +279,7 @@ public class XMPPConnection extends Connection {
 
         // Create the roster if it is not a reconnection or roster already created by getRoster()
         if (this.roster == null) {
-        	if(rosterStorage==null){
-        		this.roster = new Roster(this);
-        	}
-        	else{
-        		this.roster = new Roster(this,rosterStorage);
-        	}
+            this.roster = new Roster(this);
         }
         if (config.isRosterLoadedAtLogin()) {
             this.roster.reload();
@@ -380,7 +373,7 @@ public class XMPPConnection extends Connection {
         if (!roster.rosterInitialized) {
             try {
                 synchronized (roster) {
-                    long waitTime = SmackConfiguration.getPacketReplyTimeout();
+                    long waitTime = SmackConfiguration.getDefaultPacketReplyTimeout();
                     long start = System.currentTimeMillis();
                     while (!roster.rosterInitialized) {
                         if (waitTime <= 0) {
@@ -475,8 +468,6 @@ public class XMPPConnection extends Connection {
 
     public synchronized void disconnect(Presence unavailablePresence) {
         // If not connected, ignore this request.
-        PacketReader packetReader = this.packetReader;
-        PacketWriter packetWriter = this.packetWriter;
         if (packetReader == null || packetWriter == null) {
             return;
         }
@@ -487,16 +478,7 @@ public class XMPPConnection extends Connection {
 
         shutdown(unavailablePresence);
 
-        if (roster != null) {
-            roster.cleanup();
-            roster = null;
-        }
-        chatManager = null;
-
         wasAuthenticated = false;
-
-        packetWriter.cleanup();
-        packetReader.cleanup();
     }
 
     public void sendPacket(Packet packet) {
@@ -507,57 +489,6 @@ public class XMPPConnection extends Connection {
             throw new NullPointerException("Packet is null.");
         }
         packetWriter.sendPacket(packet);
-    }
-
-    /**
-     * Registers a packet interceptor with this connection. The interceptor will be
-     * invoked every time a packet is about to be sent by this connection. Interceptors
-     * may modify the packet to be sent. A packet filter determines which packets
-     * will be delivered to the interceptor.
-     *
-     * @param packetInterceptor the packet interceptor to notify of packets about to be sent.
-     * @param packetFilter      the packet filter to use.
-     * @deprecated replaced by {@link Connection#addPacketInterceptor(PacketInterceptor, PacketFilter)}.
-     */
-    public void addPacketWriterInterceptor(PacketInterceptor packetInterceptor,
-            PacketFilter packetFilter) {
-        addPacketInterceptor(packetInterceptor, packetFilter);
-    }
-
-    /**
-     * Removes a packet interceptor.
-     *
-     * @param packetInterceptor the packet interceptor to remove.
-     * @deprecated replaced by {@link Connection#removePacketInterceptor(PacketInterceptor)}.
-     */
-    public void removePacketWriterInterceptor(PacketInterceptor packetInterceptor) {
-        removePacketInterceptor(packetInterceptor);
-    }
-
-    /**
-     * Registers a packet listener with this connection. The listener will be
-     * notified of every packet that this connection sends. A packet filter determines
-     * which packets will be delivered to the listener. Note that the thread
-     * that writes packets will be used to invoke the listeners. Therefore, each
-     * packet listener should complete all operations quickly or use a different
-     * thread for processing.
-     *
-     * @param packetListener the packet listener to notify of sent packets.
-     * @param packetFilter   the packet filter to use.
-     * @deprecated replaced by {@link #addPacketSendingListener(PacketListener, PacketFilter)}.
-     */
-    public void addPacketWriterListener(PacketListener packetListener, PacketFilter packetFilter) {
-        addPacketSendingListener(packetListener, packetFilter);
-    }
-
-    /**
-     * Removes a packet listener for sending packets from this connection.
-     *
-     * @param packetListener the packet listener to remove.
-     * @deprecated replaced by {@link #removePacketSendingListener(PacketListener)}.
-     */
-    public void removePacketWriterListener(PacketListener packetListener) {
-        removePacketSendingListener(packetListener);
     }
 
     private void connectUsingConfiguration(ConnectionConfiguration config) throws XMPPException {
@@ -665,9 +596,6 @@ public class XMPPConnection extends Connection {
                     listener.connectionCreated(this);
                 }
             }
-            else if (!wasAuthenticated) {
-                notifyReconnection();
-            }
 
         }
         catch (XMPPException ex) {
@@ -710,7 +638,6 @@ public class XMPPConnection extends Connection {
                 socket = null;
             }
             this.setWasAuthenticated(authenticated);
-            chatManager = null;
             authenticated = false;
             connected = false;
 
@@ -813,7 +740,6 @@ public class XMPPConnection extends Connection {
         if(config.getCallbackHandler() == null) {
            ks = null;
         } else if (context == null) {
-            //System.out.println("Keystore type: "+configuration.getKeystoreType());
             if(config.getKeystoreType().equals("NONE")) {
                 ks = null;
                 pcb = null;
@@ -870,8 +796,7 @@ public class XMPPConnection extends Connection {
         // Verify certificate presented by the server
         if (context == null) {
             context = SSLContext.getInstance("TLS");
-            context.init(kms, new javax.net.ssl.TrustManager[] { new ServerTrustManager(getServiceName(), config) },
-                    new java.security.SecureRandom());
+            context.init(kms, null, new java.security.SecureRandom());
         }
         Socket plain = socket;
         // Secure the plain connection
@@ -960,7 +885,7 @@ public class XMPPConnection extends Connection {
             // Wait until compression is being used or a timeout happened
             synchronized (this) {
                 try {
-                    this.wait(SmackConfiguration.getPacketReplyTimeout() * 5);
+                    this.wait(SmackConfiguration.getDefaultPacketReplyTimeout() * 5);
                 }
                 catch (InterruptedException e) {
                     // Ignore.
@@ -1038,13 +963,11 @@ public class XMPPConnection extends Connection {
         // to the server and the connection was terminated abruptly
         if (connected && wasAuthenticated) {
             // Make the login
-            // 2014-02-13 - (Victor) commented out anon login, since we don't use.
-			//              Also added sleep, since login right after connect fucks up
-            //if (isAnonymous()) {
+            if (isAnonymous()) {
                 // Make the anonymous login
-                //loginAnonymously();
-            //}
-            //else {
+                loginAnonymously();
+            }
+            else {
 				try {
 					Thread.sleep(250);
 				} catch (Exception e) {
@@ -1052,7 +975,7 @@ public class XMPPConnection extends Connection {
 				}
 				login(config.getUsername(), config.getPassword(), config.getResource());
 				notifyReconnection();
-			//}
+			}
         }
     }
 
@@ -1067,15 +990,6 @@ public class XMPPConnection extends Connection {
         }
     }
 
-	@Override
-	public void setRosterStorage(RosterStorage storage)
-			throws IllegalStateException {
-		if(roster!=null){
-			throw new IllegalStateException("Roster is already initialized");
-		}
-		this.rosterStorage = storage;
-	}
-
     /**
      * Sends out a notification that there was an error with the connection
      * and closes the connection. Also prints the stack trace of the given exception
@@ -1084,10 +998,13 @@ public class XMPPConnection extends Connection {
      */
     synchronized void notifyConnectionError(Exception e) {
         // Listeners were already notified of the exception, return right here.
-        if (packetReader.done && packetWriter.done) return;
+        if ((packetReader == null || packetReader.done) &&
+                (packetWriter == null || packetWriter.done)) return;
 
-        packetReader.done = true;
-        packetWriter.done = true;
+        if (packetReader != null)
+            packetReader.done = true;
+        if (packetWriter != null)
+            packetWriter.done = true;
         // Closes the connection temporary. A reconnection is possible
         shutdown(new Presence(Presence.Type.unavailable));
         // Notify connection listeners of the error.
@@ -1102,7 +1019,6 @@ public class XMPPConnection extends Connection {
             }
         }
     }
-    
 
     /**
      * Sends a notification indicating that the connection was reconnected successfully.
