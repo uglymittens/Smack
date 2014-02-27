@@ -1,8 +1,9 @@
 /**
+ * $RCSfile$
+ * $Revision$
+ * $Date$
  *
- * Copyright the original author or authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * All rights reserved. Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -18,7 +19,6 @@ package org.jivesoftware.smack;
 
 import org.jivesoftware.smack.packet.StreamError;
 import java.util.Random;
-import java.util.logging.Logger;
 /**
  * Handles the automatic reconnection process. Every time a connection is dropped without
  * the application explictly closing it, the manager automatically tries to reconnect to
@@ -34,8 +34,7 @@ import java.util.logging.Logger;
  * @author Francisco Vives
  */
 public class ReconnectionManager implements ConnectionListener {
-    private static final Logger LOGGER = Logger.getLogger(ReconnectionManager.class.getName());
-    
+
     // Holds the connection to the server
     private Connection connection;
     private Thread reconnectionThread;
@@ -59,7 +58,6 @@ public class ReconnectionManager implements ConnectionListener {
         this.connection = connection;
     }
 
-
     /**
      * Returns true if the reconnection mechanism is enabled.
      *
@@ -82,11 +80,12 @@ public class ReconnectionManager implements ConnectionListener {
      * </ol>
      */
     synchronized protected void reconnect() {
-        if (this.isReconnectionAllowed()) {
+    		// if (this.isReconnectionAllowed()) {
+        if (true) {
             // Since there is no thread running, creates a new one to attempt
             // the reconnection.
             // avoid to run duplicated reconnectionThread -- fd: 16/09/2010
-            if (reconnectionThread!=null && reconnectionThread.isAlive()) return;
+            //if (reconnectionThread!=null && reconnectionThread.isAlive()) return;
             
             reconnectionThread = new Thread() {
              			
@@ -102,13 +101,8 @@ public class ReconnectionManager implements ConnectionListener {
                  */
                 private int timeDelay() {
                     attempts++;
-                    if (attempts > 13) {
-                	return randomBase*6*5;      // between 2.5 and 7.5 minutes (~5 minutes)
-                    }
-                    if (attempts > 7) {
-                	return randomBase*6;       // between 30 and 90 seconds (~1 minutes)
-                    }
-                    return randomBase;       // 10 seconds
+                    //return randomBase;       // random seconds
+                    return 8;	// return this... we want a quick reconnect
                 }
 
                 /**
@@ -118,14 +112,13 @@ public class ReconnectionManager implements ConnectionListener {
                 public void run() {
                     // The process will try to reconnect until the connection is established or
                     // the user cancel the reconnection process {@link Connection#disconnect()}
-                    while (ReconnectionManager.this.isReconnectionAllowed()) {
+                    while (true) {
                         // Find how much time we should wait until the next reconnection
                         int remainingSeconds = timeDelay();
                         // Sleep until we're ready for the next reconnection attempt. Notify
                         // listeners once per second about how much time remains before the next
                         // reconnection attempt.
-                        while (ReconnectionManager.this.isReconnectionAllowed() &&
-                                remainingSeconds > 0)
+                        while (remainingSeconds > 0)
                         {
                             try {
                                 Thread.sleep(1000);
@@ -134,7 +127,7 @@ public class ReconnectionManager implements ConnectionListener {
                                         .notifyAttemptToReconnectIn(remainingSeconds);
                             }
                             catch (InterruptedException e1) {
-                                LOGGER.warning("Sleeping thread interrupted");
+                                e1.printStackTrace();
                                 // Notify the reconnection has failed
                                 ReconnectionManager.this.notifyReconnectionFailed(e1);
                             }
@@ -142,12 +135,11 @@ public class ReconnectionManager implements ConnectionListener {
 
                         // Makes a reconnection attempt
                         try {
-                            if (ReconnectionManager.this.isReconnectionAllowed()) {
-                                connection.connect();
-                            }
+                            connection.connect();
                         }
                         catch (XMPPException e) {
                             // Fires the failed reconnection notification
+                            e.printStackTrace();
                             ReconnectionManager.this.notifyReconnectionFailed(e);
                         }
                     }
