@@ -17,9 +17,11 @@
 
 package org.jivesoftware.smackx.debugger;
 
+import org.jivesoftware.smack.AbstractConnectionListener;
 import org.jivesoftware.smack.ConnectionListener;
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.debugger.SmackDebugger;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Message;
@@ -35,6 +37,7 @@ import javax.swing.text.BadLocationException;
 import javax.xml.transform.*;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
+
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
@@ -113,7 +116,7 @@ public class EnhancedDebugger implements SmackDebugger {
     private JFormattedTextField userField = null;
     private JFormattedTextField statusField = null;
 
-    private Connection connection = null;
+    private XMPPConnection connection = null;
 
     private PacketListener packetReaderListener = null;
     private PacketListener packetWriterListener = null;
@@ -141,7 +144,7 @@ public class EnhancedDebugger implements SmackDebugger {
 
     JTabbedPane tabbedPane;
 
-    public EnhancedDebugger(Connection connection, Writer writer, Reader reader) {
+    public EnhancedDebugger(XMPPConnection connection, Writer writer, Reader reader) {
         this.connection = connection;
         this.writer = writer;
         this.reader = reader;
@@ -199,7 +202,7 @@ public class EnhancedDebugger implements SmackDebugger {
         };
 
         // Create a thread that will listen for any connection closed event
-        connListener = new ConnectionListener() {
+        connListener = new AbstractConnectionListener() {
             public void connectionClosed() {
                 SwingUtilities.invokeLater(new Runnable() {
                     public void run() {
@@ -544,7 +547,12 @@ public class EnhancedDebugger implements SmackDebugger {
             public void actionPerformed(ActionEvent e) {
                 if (!"".equals(adhocMessages.getText())) {
                     AdHocPacket packetToSend = new AdHocPacket(adhocMessages.getText());
-                    connection.sendPacket(packetToSend);
+                    try {
+                        connection.sendPacket(packetToSend);
+                    }
+                    catch (NotConnectedException e1) {
+                        e1.printStackTrace();
+                    }
                 }
             }
         });
@@ -570,7 +578,7 @@ public class EnhancedDebugger implements SmackDebugger {
         // Add the Host information
         JPanel connPanel = new JPanel();
         connPanel.setLayout(new GridBagLayout());
-        connPanel.setBorder(BorderFactory.createTitledBorder("Connection information"));
+        connPanel.setBorder(BorderFactory.createTitledBorder("XMPPConnection information"));
 
         JLabel label = new JLabel("Host: ");
         label.setMinimumSize(new java.awt.Dimension(150, 14));
@@ -793,7 +801,7 @@ public class EnhancedDebugger implements SmackDebugger {
 
                 messagesTable.addRow(
                         new Object[]{
-                                formatXML(packet.toXML()),
+                                formatXML(packet.toXML().toString()),
                                 dateFormatter.format(new Date()),
                                 packetReceivedIcon,
                                 packetTypeIcon,
@@ -854,7 +862,7 @@ public class EnhancedDebugger implements SmackDebugger {
 
                 messagesTable.addRow(
                         new Object[]{
-                                formatXML(packet.toXML()),
+                                formatXML(packet.toXML().toString()),
                                 dateFormatter.format(new Date()),
                                 packetSentIcon,
                                 packetTypeIcon,

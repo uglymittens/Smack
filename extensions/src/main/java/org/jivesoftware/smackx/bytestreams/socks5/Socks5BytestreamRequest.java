@@ -21,7 +21,10 @@ import java.net.Socket;
 import java.util.Collection;
 import java.util.concurrent.TimeoutException;
 
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.XMPPError;
 import org.jivesoftware.smack.util.Cache;
@@ -186,10 +189,11 @@ public class Socks5BytestreamRequest implements BytestreamRequest {
      * {@link #setTotalConnectTimeout(int)} and {@link #setMinimumConnectTimeout(int)}.
      * 
      * @return the socket to send/receive data
-     * @throws XMPPException if connection to all SOCKS5 proxies failed or if stream is invalid.
      * @throws InterruptedException if the current thread was interrupted while waiting
+     * @throws XMPPErrorException 
+     * @throws SmackException 
      */
-    public Socks5BytestreamSession accept() throws XMPPException, InterruptedException {
+    public Socks5BytestreamSession accept() throws InterruptedException, XMPPErrorException, SmackException {
         Collection<StreamHost> streamHosts = this.bytestreamRequest.getStreamHosts();
 
         // throw exceptions if request contains no stream hosts
@@ -261,23 +265,24 @@ public class Socks5BytestreamRequest implements BytestreamRequest {
 
     /**
      * Rejects the SOCKS5 Bytestream request by sending a reject error to the initiator.
+     * @throws NotConnectedException 
      */
-    public void reject() {
+    public void reject() throws NotConnectedException {
         this.manager.replyRejectPacket(this.bytestreamRequest);
     }
 
     /**
      * Cancels the SOCKS5 Bytestream request by sending an error to the initiator and building a
      * XMPP exception.
-     * 
-     * @throws XMPPException XMPP exception containing the XMPP error
+     * @throws XMPPErrorException 
+     * @throws NotConnectedException 
      */
-    private void cancelRequest() throws XMPPException {
+    private void cancelRequest() throws XMPPErrorException, NotConnectedException {
         String errorMessage = "Could not establish socket with any provided host";
         XMPPError error = new XMPPError(XMPPError.Condition.item_not_found, errorMessage);
         IQ errorIQ = IQ.createErrorResponse(this.bytestreamRequest, error);
         this.manager.getConnection().sendPacket(errorIQ);
-        throw new XMPPException(errorMessage, error);
+        throw new XMPPErrorException(errorMessage, error);
     }
 
     /**

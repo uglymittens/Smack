@@ -21,6 +21,7 @@ import org.jivesoftware.smack.SmackConfiguration;
 import org.jivesoftware.smack.provider.ProviderManager;
 
 import javax.swing.*;
+
 import java.awt.*;
 import java.awt.event.*;
 import java.net.URL;
@@ -121,7 +122,7 @@ public class EnhancedDebuggerWindow {
         if (frame == null) {
             createDebug();
         }
-        debugger.tabbedPane.setName("Connection_" + tabbedPane.getComponentCount());
+        debugger.tabbedPane.setName("XMPPConnection_" + tabbedPane.getComponentCount());
         tabbedPane.add(debugger.tabbedPane, tabbedPane.getComponentCount() - 1);
         tabbedPane.setIconAt(tabbedPane.indexOfComponent(debugger.tabbedPane), connectionCreatedIcon);
         frame.setTitle(
@@ -168,7 +169,7 @@ public class EnhancedDebuggerWindow {
         int index = getInstance().tabbedPane.indexOfComponent(debugger.tabbedPane);
         getInstance().tabbedPane.setToolTipTextAt(
                 index,
-                "Connection closed due to the exception: " + e.getMessage());
+                "XMPPConnection closed due to the exception: " + e.getMessage());
         getInstance().tabbedPane.setIconAt(
                 index,
                 connectionClosedOnErrorIcon);
@@ -184,7 +185,8 @@ public class EnhancedDebuggerWindow {
      * Creates the main debug window that provides information about Smack and also shows
      * a tab panel for each connection that is being debugged.
      */
-    private void createDebug() {
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+	private void createDebug() {
 
         frame = new JFrame("Smack Debug Window");
 

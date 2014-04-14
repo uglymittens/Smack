@@ -16,8 +16,9 @@
  */
 package org.jivesoftware.smackx.jingle;
 
+import org.jivesoftware.smack.SmackException;
 import org.jivesoftware.smack.packet.IQ;
-import org.jivesoftware.smackx.packet.Jingle;
+import org.jivesoftware.smackx.jingle.packet.Jingle;
 
 /**
  *  Implement the Jingle Session state using the State Behavioral pattern.
@@ -54,7 +55,7 @@ public abstract class JingleSessionState {
      * Process an incoming Jingle Packet.
      * When you look at the GoF State pattern this method roughly corresponds to example on p310: ProcessOctect().
      */
-    public abstract IQ processJingle(JingleSession session, Jingle jingle, JingleActionEnum action);
+    public abstract IQ processJingle(JingleSession session, Jingle jingle, JingleActionEnum action) throws SmackException;
 
     /**
      * For debugging just emit the short name of the class.

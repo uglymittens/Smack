@@ -17,14 +17,14 @@
 package org.jivesoftware.smackx.jingle.nat;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Logger;
 
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.PacketCollector;
-import org.jivesoftware.smack.Connection;
 import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.filter.PacketIDFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.provider.IQProvider;
 import org.jivesoftware.smack.provider.ProviderManager;
@@ -78,7 +78,7 @@ public class STUN extends IQ {
     /**
      * Get a list of STUN Servers recommended by the Server
      *
-     * @return
+     * @return the list of STUN servers
      */
     public List<StunServerAddress> getServers() {
         return servers;
@@ -87,7 +87,7 @@ public class STUN extends IQ {
     /**
      * Get Public Ip returned from the XMPP server
      *
-     * @return
+     * @return the public IP
      */
     public String getPublicIp() {
         return publicIp;
@@ -105,7 +105,7 @@ public class STUN extends IQ {
     /**
      * Get the Child Element XML of the Packet
      *
-     * @return
+     * @return the child element XML
      */
     public String getChildElementXML() {
         StringBuilder str = new StringBuilder();
@@ -131,7 +131,6 @@ public class STUN extends IQ {
 
             int eventType;
             String elementName;
-            String namespace;
 
             if (!parser.getNamespace().equals(NAMESPACE))
                 throw new Exception("Not a STUN packet");
@@ -142,7 +141,6 @@ public class STUN extends IQ {
             while (!done) {
                 eventType = parser.next();
                 elementName = parser.getName();
-                namespace = parser.getNamespace();
 
                 if (eventType == XmlPullParser.START_TAG) {
                     if (elementName.equals("server")) {
@@ -182,9 +180,10 @@ public class STUN extends IQ {
      * If a error occurs or the server don't support STUN Service, null is returned.
      *
      * @param connection
-     * @return
+     * @return the STUN server address
+     * @throws NotConnectedException 
      */
-    public static STUN getSTUNServer(Connection connection) {
+    public static STUN getSTUNServer(XMPPConnection connection) throws NotConnectedException {
 
         if (!connection.isConnected()) {
             return null;
@@ -193,10 +192,7 @@ public class STUN extends IQ {
         STUN stunPacket = new STUN();
         stunPacket.setTo(DOMAIN + "." + connection.getServiceName());
 
-        PacketCollector collector = connection
-                .createPacketCollector(new PacketIDFilter(stunPacket.getPacketID()));
-
-        connection.sendPacket(stunPacket);
+        PacketCollector collector = connection.createPacketCollectorAndSend(stunPacket);
 
         STUN response = (STUN) collector.nextResult();
 
@@ -209,10 +205,12 @@ public class STUN extends IQ {
     /**
      * Check if the server support STUN Service.
      *
-     * @param xmppConnection
-     * @return
+     * @param connection the connection
+     * @return true if the server support STUN
+     * @throws SmackException 
+     * @throws XMPPException 
      */
-    public static boolean serviceAvailable(Connection connection) {
+    public static boolean serviceAvailable(XMPPConnection connection) throws XMPPException, SmackException {
 
         if (!connection.isConnected()) {
             return false;
@@ -220,31 +218,22 @@ public class STUN extends IQ {
 
         LOGGER.fine("Service listing");
 
-        ServiceDiscoveryManager disco = ServiceDiscoveryManager
-                .getInstanceFor(connection);
-        try {
-            DiscoverItems items = disco.discoverItems(connection.getServiceName());
+        ServiceDiscoveryManager disco = ServiceDiscoveryManager.getInstanceFor(connection);
+        DiscoverItems items = disco.discoverItems(connection.getServiceName());
 
-            Iterator<DiscoverItems.Item> iter = items.getItems();
-            while (iter.hasNext()) {
-                DiscoverItems.Item item = iter.next();
-                DiscoverInfo info = disco.discoverInfo(item.getEntityID());
+        for (DiscoverItems.Item item : items.getItems()) {
+            DiscoverInfo info = disco.discoverInfo(item.getEntityID());
 
-                Iterator<DiscoverInfo.Identity> iter2 = info.getIdentities();
-                while (iter2.hasNext()) {
-                    DiscoverInfo.Identity identity = iter2.next();
-                    if (identity.getCategory().equals("proxy") && identity.getType().equals("stun"))
-                        if (info.containsFeature(NAMESPACE))
-                            return true;
-                }
-
-                LOGGER.fine(item.getName()+"-"+info.getType());
-
+            for (DiscoverInfo.Identity identity : info.getIdentities()) {
+                if (identity.getCategory().equals("proxy") && identity.getType().equals("stun"))
+                    if (info.containsFeature(NAMESPACE))
+                        return true;
             }
+
+            LOGGER.fine(item.getName() + "-" + info.getType());
+
         }
-        catch (XMPPException e) {
-            e.printStackTrace();
-        }
+
         return false;
     }
 
@@ -264,7 +253,7 @@ public class STUN extends IQ {
         /**
          * Get the Host Address
          *
-         * @return
+         * @return the host address
          */
         public String getServer() {
             return server;
@@ -273,7 +262,7 @@ public class STUN extends IQ {
         /**
          * Get the Server Port
          *
-         * @return
+         * @return the server port
          */
         public String getPort() {
             return port;

@@ -20,9 +20,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.jivesoftware.smack.util.dns.DNSResolver;
 import org.jivesoftware.smack.util.dns.HostAddress;
@@ -35,12 +36,7 @@ import org.jivesoftware.smack.util.dns.SRVRecord;
  */
 public class DNSUtil {
 
-    /**
-     * Create a cache to hold the 100 most recently accessed DNS lookups for a period of
-     * 10 minutes.
-     */
-    private static Map<String, List<HostAddress>> cache = new Cache<String, List<HostAddress>>(100, 1000*60*10);
-
+    private static final Logger LOGGER = Logger.getLogger(DNSUtil.class.getName());
     private static DNSResolver dnsResolver = null;
 
     /**
@@ -55,7 +51,7 @@ public class DNSUtil {
     /**
      * Returns the current DNS resolved used to perform DNS lookups.
      *
-     * @return
+     * @return the active DNSResolver
      */
     public static DNSResolver getDNSResolver() {
         return dnsResolver;
@@ -77,8 +73,9 @@ public class DNSUtil {
      * @param domain the domain.
      * @return List of HostAddress, which encompasses the hostname and port that the
      *      XMPP server can be reached at for the specified domain.
+     * @throws Exception 
      */
-    public static List<HostAddress> resolveXMPPDomain(final String domain) {
+    public static List<HostAddress> resolveXMPPDomain(final String domain) throws Exception {
         if (dnsResolver == null) {
             List<HostAddress> addresses = new ArrayList<HostAddress>(1);
             addresses.add(new HostAddress(domain, 5222));
@@ -103,8 +100,9 @@ public class DNSUtil {
      * @param domain the domain.
      * @return List of HostAddress, which encompasses the hostname and port that the
      *      XMPP server can be reached at for the specified domain.
+     * @throws Exception 
      */
-    public static List<HostAddress> resolveXMPPServerDomain(final String domain) {
+    public static List<HostAddress> resolveXMPPServerDomain(final String domain) throws Exception {
         if (dnsResolver == null) {
             List<HostAddress> addresses = new ArrayList<HostAddress>(1);
             addresses.add(new HostAddress(domain, 5269));
@@ -113,17 +111,7 @@ public class DNSUtil {
         return resolveDomain(domain, 's');
     }
 
-    private static List<HostAddress> resolveDomain(String domain, char keyPrefix) {
-        // Prefix the key with 's' to distinguish him from the client domain lookups
-        String key = keyPrefix + domain;
-        // Return item from cache if it exists.
-        if (cache.containsKey(key)) {
-            List<HostAddress> addresses = cache.get(key);
-            if (addresses != null) {
-                return addresses;
-            }
-        }
-
+    private static List<HostAddress> resolveDomain(String domain, char keyPrefix) throws Exception {
         List<HostAddress> addresses = new ArrayList<HostAddress>();
 
         // Step one: Do SRV lookups
@@ -136,15 +124,17 @@ public class DNSUtil {
             srvDomain = domain;
         }
         List<SRVRecord> srvRecords = dnsResolver.lookupSRVRecords(srvDomain);
+        if (LOGGER.isLoggable(Level.FINE)) {
+            String logMessage = "Resolved SRV RR for " + srvDomain + ":";
+            for (SRVRecord r : srvRecords)
+                logMessage += " " + r;
+            LOGGER.fine(logMessage);
+        }
         List<HostAddress> sortedRecords = sortSRVRecords(srvRecords);
-        if (sortedRecords != null)
-            addresses.addAll(sortedRecords);
+        addresses.addAll(sortedRecords);
 
         // Step two: Add the hostname to the end of the list
         addresses.add(new HostAddress(domain));
-
-        // Add item to cache.
-        cache.put(key, addresses);
 
         return addresses;
     }
@@ -155,13 +145,13 @@ public class DNSUtil {
      * is calculated by random. The others are ore simply ordered by their priority.
      * 
      * @param records
-     * @return
+     * @return the list of resolved HostAddresses
      */
-    protected static List<HostAddress> sortSRVRecords(List<SRVRecord> records) {
+    private static List<HostAddress> sortSRVRecords(List<SRVRecord> records) {
         // RFC 2782, Usage rules: "If there is precisely one SRV RR, and its Target is "."
         // (the root domain), abort."
         if (records.size() == 1 && records.get(0).getFQDN().equals("."))
-            return null;
+            return Collections.emptyList();
 
         // sorting the records improves the performance of the bisection later
         Collections.sort(records);

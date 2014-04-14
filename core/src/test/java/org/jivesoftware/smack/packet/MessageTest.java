@@ -16,9 +16,13 @@
  */
 package org.jivesoftware.smack.packet;
 
-import static org.custommonkey.xmlunit.XMLAssert.*;
+import static org.custommonkey.xmlunit.XMLAssert.assertXMLEqual;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
-import org.junit.Ignore;
+import org.custommonkey.xmlunit.Diff;
+import org.custommonkey.xmlunit.examples.RecursiveElementNameAndTextQualifier;
 import org.junit.Test;
 import org.xml.sax.SAXException;
 
@@ -50,7 +54,7 @@ public class MessageTest {
         Message messageTypeInConstructor = new Message(null, Message.Type.chat);
         messageTypeInConstructor.setPacketID(Packet.ID_NOT_AVAILABLE);
         assertEquals(type, messageTypeInConstructor.getType());
-        assertXMLEqual(control, messageTypeInConstructor.toXML());
+        assertXMLEqual(control, messageTypeInConstructor.toXML().toString());
 
         controlBuilder = new StringBuilder();
         controlBuilder.append("<message")
@@ -63,7 +67,7 @@ public class MessageTest {
         Message messageTypeSet = getNewMessage();
         messageTypeSet.setType(type2);
         assertEquals(type2, messageTypeSet.getType());
-        assertXMLEqual(control, messageTypeSet.toXML());
+        assertXMLEqual(control, messageTypeSet.toXML().toString());
     }
 
     @Test(expected=IllegalArgumentException.class)
@@ -94,7 +98,7 @@ public class MessageTest {
         message.setSubject(messageSubject);
 
         assertEquals(messageSubject, message.getSubject());
-        assertXMLEqual(control, message.toXML());
+        assertXMLEqual(control, message.toXML().toString());
     }
 
     @Test
@@ -113,10 +117,9 @@ public class MessageTest {
         message.setBody(messageBody);
 
         assertEquals(messageBody, message.getBody());
-        assertXMLEqual(control, message.toXML());
+        assertXMLEqual(control, message.toXML().toString());
     }
 
-    @Ignore
     @Test
     public void multipleMessageBodiesTest() throws IOException, SAXException, ParserConfigurationException {
         final String messageBody1 = "This is a test of the emergency broadcast system, 1.";
@@ -147,7 +150,9 @@ public class MessageTest {
         message.addBody(null, messageBody1);
         message.addBody(lang2, messageBody2);
         message.addBody(lang3, messageBody3);
-        assertXMLEqual(control, message.toXML());
+        Diff xmlDiff = new Diff(control, message.toXML().toString());
+        xmlDiff.overrideElementQualifier(new RecursiveElementNameAndTextQualifier());
+        assertTrue(xmlDiff.similar());
 
         Collection<String> languages = message.getBodyLanguages();
         List<String> controlLanguages = new ArrayList<String>();
@@ -191,7 +196,7 @@ public class MessageTest {
         message.setThread(messageThread);
 
         assertEquals(messageThread, message.getThread());
-        assertXMLEqual(control, message.toXML());
+        assertXMLEqual(control, message.toXML().toString());
     }
 
     @Test
@@ -209,7 +214,7 @@ public class MessageTest {
         Message message = getNewMessage();
         message.setLanguage(lang);
 
-        assertXMLEqual(control, message.toXML());
+        assertXMLEqual(control, message.toXML().toString());
     }
 
     @Test

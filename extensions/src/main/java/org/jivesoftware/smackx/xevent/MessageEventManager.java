@@ -19,13 +19,13 @@ package org.jivesoftware.smackx.xevent;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.filter.PacketExtensionFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.Message;
@@ -45,7 +45,7 @@ public class MessageEventManager {
     private List<MessageEventNotificationListener> messageEventNotificationListeners = new ArrayList<MessageEventNotificationListener>();
     private List<MessageEventRequestListener> messageEventRequestListeners = new ArrayList<MessageEventRequestListener>();
 
-    private Connection con;
+    private XMPPConnection con;
 
     private PacketFilter packetFilter = new PacketExtensionFilter("x", "jabber:x:event");
     private PacketListener packetListener;
@@ -53,9 +53,9 @@ public class MessageEventManager {
     /**
      * Creates a new message event manager.
      *
-     * @param con a Connection to a XMPP server.
+     * @param con a XMPPConnection to a XMPP server.
      */
-    public MessageEventManager(Connection con) {
+    public MessageEventManager(XMPPConnection con) {
         this.con = con;
         init();
     }
@@ -197,18 +197,18 @@ public class MessageEventManager {
                     (MessageEvent) message.getExtension("x", "jabber:x:event");
                 if (messageEvent.isMessageEventRequest()) {
                     // Fire event for requests of message events
-                    for (Iterator<String> it = messageEvent.getEventTypes(); it.hasNext();)
+                    for (String eventType : messageEvent.getEventTypes())
                         fireMessageEventRequestListeners(
                             message.getFrom(),
                             message.getPacketID(),
-                            it.next().concat("NotificationRequested"));
+                            eventType.concat("NotificationRequested"));
                 } else
                     // Fire event for notifications of message events
-                    for (Iterator<String> it = messageEvent.getEventTypes(); it.hasNext();)
+                    for (String eventType : messageEvent.getEventTypes())
                         fireMessageEventNotificationListeners(
                             message.getFrom(),
                             messageEvent.getPacketID(),
-                            it.next().concat("Notification"));
+                            eventType.concat("Notification"));
 
             };
 
@@ -221,8 +221,9 @@ public class MessageEventManager {
      * 
      * @param to the recipient of the notification.
      * @param packetID the id of the message to send.
+     * @throws NotConnectedException 
      */
-    public void sendDeliveredNotification(String to, String packetID) {
+    public void sendDeliveredNotification(String to, String packetID) throws NotConnectedException {
         // Create the message to send
         Message msg = new Message(to);
         // Create a MessageEvent Package and add it to the message
@@ -239,8 +240,9 @@ public class MessageEventManager {
      * 
      * @param to the recipient of the notification.
      * @param packetID the id of the message to send.
+     * @throws NotConnectedException 
      */
-    public void sendDisplayedNotification(String to, String packetID) {
+    public void sendDisplayedNotification(String to, String packetID) throws NotConnectedException {
         // Create the message to send
         Message msg = new Message(to);
         // Create a MessageEvent Package and add it to the message
@@ -257,8 +259,9 @@ public class MessageEventManager {
      * 
      * @param to the recipient of the notification.
      * @param packetID the id of the message to send.
+     * @throws NotConnectedException 
      */
-    public void sendComposingNotification(String to, String packetID) {
+    public void sendComposingNotification(String to, String packetID) throws NotConnectedException {
         // Create the message to send
         Message msg = new Message(to);
         // Create a MessageEvent Package and add it to the message
@@ -275,8 +278,9 @@ public class MessageEventManager {
      * 
      * @param to the recipient of the notification.
      * @param packetID the id of the message to send.
+     * @throws NotConnectedException 
      */
-    public void sendCancelledNotification(String to, String packetID) {
+    public void sendCancelledNotification(String to, String packetID) throws NotConnectedException {
         // Create the message to send
         Message msg = new Message(to);
         // Create a MessageEvent Package and add it to the message

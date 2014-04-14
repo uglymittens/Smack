@@ -29,6 +29,9 @@ import org.jivesoftware.smackx.xdata.Form;
 import org.jivesoftware.smackx.xdata.FormField;
 import org.jivesoftware.smackx.xdata.packet.DataForm;
 import org.jivesoftware.smack.*;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.*;
 import org.jivesoftware.smack.packet.*;
 import org.jivesoftware.smack.util.StringUtils;
@@ -56,7 +59,7 @@ import java.util.Map;
 public class Workgroup {
 
     private String workgroupJID;
-    private Connection connection;
+    private XMPPConnection connection;
     private boolean inQueue;
     private List<WorkgroupInvitationListener> invitationListeners;
     private List<QueueListener> queueListeners;
@@ -74,7 +77,7 @@ public class Workgroup {
      * @param connection   an XMPP connection which must have already undergone a
      *                     successful login.
      */
-    public Workgroup(String workgroupJID, Connection connection) {
+    public Workgroup(String workgroupJID, XMPPConnection connection) {
         // Login must have been done before passing in connection.
         if (!connection.isAuthenticated()) {
             throw new IllegalStateException("Must login to server before creating workgroup.");
@@ -112,7 +115,7 @@ public class Workgroup {
          */
         MultiUserChat.addInvitationListener(connection,
                 new org.jivesoftware.smackx.muc.InvitationListener() {
-                    public void invitationReceived(Connection conn, String room, String inviter,
+                    public void invitationReceived(XMPPConnection conn, String room, String inviter,
                                                    String reason, String password, Message message) {
                         inQueue = false;
                         queuePosition = -1;
@@ -153,13 +156,15 @@ public class Workgroup {
      * available only when agents are available for this workgroup.
      *
      * @return true if the workgroup is available for receiving new requests.
-     * @throws XMPPException 
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public boolean isAvailable() throws XMPPException {
+    public boolean isAvailable() throws NoResponseException, XMPPErrorException, NotConnectedException {
         Presence directedPresence = new Presence(Presence.Type.available);
         directedPresence.setTo(workgroupJID);
         PacketFilter typeFilter = new PacketTypeFilter(Presence.class);
-        PacketFilter fromFilter = new FromContainsFilter(workgroupJID);
+        PacketFilter fromFilter = FromMatchesFilter.create(workgroupJID);
         PacketCollector collector = connection.createPacketCollector(new AndFilter(fromFilter,
                 typeFilter));
 
@@ -230,8 +235,9 @@ public class Workgroup {
      * @throws XMPPException if an error occured joining the queue. An error may indicate
      *                       that a connection failure occured or that the server explicitly rejected the
      *                       request to join the queue.
+     * @throws SmackException 
      */
-    public void joinQueue() throws XMPPException {
+    public void joinQueue() throws XMPPException, SmackException {
         joinQueue(null);
     }
 
@@ -267,8 +273,9 @@ public class Workgroup {
      * @throws XMPPException if an error occured joining the queue. An error may indicate
      *                       that a connection failure occured or that the server explicitly rejected the
      *                       request to join the queue.
+     * @throws SmackException 
      */
-    public void joinQueue(Form answerForm) throws XMPPException {
+    public void joinQueue(Form answerForm) throws XMPPException, SmackException {
         joinQueue(answerForm, null);
     }
 
@@ -301,11 +308,13 @@ public class Workgroup {
      * @param answerForm the completed form associated with the join reqest.
      * @param userID     String that represents the ID of the user when using anonymous sessions
      *                   or <tt>null</tt> if a userID should not be used.
-     * @throws XMPPException if an error occured joining the queue. An error may indicate
+     * @throws XMPPErrorException if an error occured joining the queue. An error may indicate
      *                       that a connection failure occured or that the server explicitly rejected the
      *                       request to join the queue.
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public void joinQueue(Form answerForm, String userID) throws XMPPException {
+    public void joinQueue(Form answerForm, String userID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         // If already in the queue ignore the join request.
         if (inQueue) {
             throw new IllegalStateException("Already in queue " + workgroupJID);
@@ -350,8 +359,9 @@ public class Workgroup {
      * @throws XMPPException if an error occured joining the queue. An error may indicate
      *                       that a connection failure occured or that the server explicitly rejected the
      *                       request to join the queue.
+     * @throws SmackException 
      */
-    public void joinQueue(Map<String,Object> metadata, String userID) throws XMPPException {
+    public void joinQueue(Map<String,Object> metadata, String userID) throws XMPPException, SmackException {
         // If already in the queue ignore the join request.
         if (inQueue) {
             throw new IllegalStateException("Already in queue " + workgroupJID);
@@ -364,13 +374,10 @@ public class Workgroup {
             String name = iter.next();
             String value = metadata.get(name).toString();
 
-            String escapedName = StringUtils.escapeForXML(name);
-            String escapedValue = StringUtils.escapeForXML(value);
-
-            FormField field = new FormField(escapedName);
+            FormField field = new FormField(name);
             field.setType(FormField.TYPE_TEXT_SINGLE);
             form.addField(field);
-            form.setAnswer(escapedName, escapedValue);
+            form.setAnswer(name, value);
         }
         joinQueue(form, userID);
     }
@@ -383,10 +390,12 @@ public class Workgroup {
      * under certain circumstances -- for example, if they no longer wish to be routed
      * to an agent because they've been waiting too long.
      *
-     * @throws XMPPException if an error occured trying to send the depart queue
+     * @throws XMPPErrorException if an error occured trying to send the depart queue
      *                       request to the server.
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public void departQueue() throws XMPPException {
+    public void departQueue() throws NoResponseException, XMPPErrorException, NotConnectedException {
         // If not in the queue ignore the depart request.
         if (!inQueue) {
             return;
@@ -589,8 +598,9 @@ public class Workgroup {
      * @param key the key to find.
      * @return the ChatSetting if found, otherwise false.
      * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws SmackException 
      */
-    public ChatSetting getChatSetting(String key) throws XMPPException {
+    public ChatSetting getChatSetting(String key) throws XMPPException, SmackException {
         ChatSettings chatSettings = getChatSettings(key, -1);
         return chatSettings.getFirstEntry();
     }
@@ -601,8 +611,9 @@ public class Workgroup {
      * @param type the type of ChatSettings to return.
      * @return the ChatSettings of given type, otherwise null.
      * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws SmackException 
      */
-    public ChatSettings getChatSettings(int type) throws XMPPException {
+    public ChatSettings getChatSettings(int type) throws XMPPException, SmackException {
         return getChatSettings(null, type);
     }
 
@@ -611,8 +622,9 @@ public class Workgroup {
      *
      * @return all ChatSettings of a given workgroup.
      * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws SmackException 
      */
-    public ChatSettings getChatSettings() throws XMPPException {
+    public ChatSettings getChatSettings() throws XMPPException, SmackException {
         return getChatSettings(null, -1);
     }
 
@@ -621,9 +633,11 @@ public class Workgroup {
      * Asks the workgroup for it's Chat Settings.
      *
      * @return key specify a key to retrieve only that settings. Otherwise for all settings, key should be null.
-     * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws NoResponseException 
+     * @throws XMPPErrorException if an error occurs while getting information from the server.
+     * @throws NotConnectedException 
      */
-    private ChatSettings getChatSettings(String key, int type) throws XMPPException {
+    private ChatSettings getChatSettings(String key, int type) throws NoResponseException, XMPPErrorException, NotConnectedException {
         ChatSettings request = new ChatSettings();
         if (key != null) {
             request.setKey(key);
@@ -644,8 +658,9 @@ public class Workgroup {
      * to see if the email service has been configured and is available.
      *
      * @return true if the email service is available, otherwise return false.
+     * @throws SmackException 
      */
-    public boolean isEmailAvailable() {
+    public boolean isEmailAvailable() throws SmackException {
         ServiceDiscoveryManager discoManager = ServiceDiscoveryManager.getInstanceFor(connection);
 
         try {
@@ -662,9 +677,11 @@ public class Workgroup {
      * Asks the workgroup for it's Offline Settings.
      *
      * @return offlineSettings the offline settings for this workgroup.
-     * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public OfflineSettings getOfflineSettings() throws XMPPException {
+    public OfflineSettings getOfflineSettings() throws NoResponseException, XMPPErrorException, NotConnectedException {
         OfflineSettings request = new OfflineSettings();
         request.setType(IQ.Type.GET);
         request.setTo(workgroupJID);
@@ -678,9 +695,11 @@ public class Workgroup {
      * Asks the workgroup for it's Sound Settings.
      *
      * @return soundSettings the sound settings for the specified workgroup.
-     * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public SoundSettings getSoundSettings() throws XMPPException {
+    public SoundSettings getSoundSettings() throws NoResponseException, XMPPErrorException, NotConnectedException {
         SoundSettings request = new SoundSettings();
         request.setType(IQ.Type.GET);
         request.setTo(workgroupJID);
@@ -693,9 +712,11 @@ public class Workgroup {
      * Asks the workgroup for it's Properties
      *
      * @return the WorkgroupProperties for the specified workgroup.
-     * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws XMPPErrorException
+     * @throws NoResponseException
+     * @throws NotConnectedException 
      */
-    public WorkgroupProperties getWorkgroupProperties() throws XMPPException {
+    public WorkgroupProperties getWorkgroupProperties() throws NoResponseException, XMPPErrorException, NotConnectedException  {
         WorkgroupProperties request = new WorkgroupProperties();
         request.setType(IQ.Type.GET);
         request.setTo(workgroupJID);
@@ -710,9 +731,11 @@ public class Workgroup {
      *
      * @param jid the jid of the user who's information you would like the workgroup to retreive.
      * @return the WorkgroupProperties for the specified workgroup.
-     * @throws XMPPException if an error occurs while getting information from the server.
+     * @throws XMPPErrorException
+     * @throws NoResponseException
+     * @throws NotConnectedException 
      */
-    public WorkgroupProperties getWorkgroupProperties(String jid) throws XMPPException {
+    public WorkgroupProperties getWorkgroupProperties(String jid) throws NoResponseException, XMPPErrorException, NotConnectedException {
         WorkgroupProperties request = new WorkgroupProperties();
         request.setJid(jid);
         request.setType(IQ.Type.GET);
@@ -730,9 +753,11 @@ public class Workgroup {
      * for future submissions.
      *
      * @return the Form to use for searching transcripts.
-     * @throws XMPPException if an error occurs while sending the request to the server.
+     * @throws XMPPErrorException
+     * @throws NoResponseException
+     * @throws NotConnectedException 
      */
-    public Form getWorkgroupForm() throws XMPPException {
+    public Form getWorkgroupForm() throws NoResponseException, XMPPErrorException, NotConnectedException {
         WorkgroupForm workgroupForm = new WorkgroupForm();
         workgroupForm.setType(IQ.Type.GET);
         workgroupForm.setTo(workgroupJID);

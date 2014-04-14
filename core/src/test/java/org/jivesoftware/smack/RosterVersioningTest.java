@@ -39,7 +39,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 /**
- * Tests that verify the correct behavior of the {@see Roster} implementation
+ * Tests that verify the correct behavior of the {@link Roster} implementation
  * with regard to roster versioning
  *
  * @see Roster
@@ -57,9 +57,9 @@ public class RosterVersioningTest {
     @Before
     public void setUp() throws Exception {
         // Uncomment this to enable debug output
-        //Connection.DEBUG_ENABLED = true;
+        //XMPPConnection.DEBUG_ENABLED = true;
 
-        DefaultRosterStore store = DefaultRosterStore.init(tmpFolder.newFolder("store"));
+        DirectoryRosterStore store = DirectoryRosterStore.init(tmpFolder.newFolder("store"));
         populateStore(store);
 
         ConnectionConfiguration conf = new ConnectionConfiguration("dummy");
@@ -83,9 +83,11 @@ public class RosterVersioningTest {
     /**
      * Tests that receiving an empty roster result causes the roster to be populated
      * by all entries of the roster store.
+     * @throws SmackException 
+     * @throws XMPPException 
      */
     @Test(timeout = 5000)
-    public void testEqualVersionStored() throws InterruptedException, IOException {
+    public void testEqualVersionStored() throws InterruptedException, IOException, XMPPException, SmackException {
         connection.getRoster().reload();
         answerWithEmptyRosterResult();
 
@@ -97,7 +99,7 @@ public class RosterVersioningTest {
         for (RosterEntry entry : entries) {
             items.add(RosterEntry.toRosterItem(entry));
         }
-        RosterStore store = DefaultRosterStore.init(tmpFolder.newFolder());
+        RosterStore store = DirectoryRosterStore.init(tmpFolder.newFolder());
         populateStore(store);
         assertEquals("Elements of the roster", new HashSet<Item>(store.getEntries()), items);
 
@@ -116,9 +118,11 @@ public class RosterVersioningTest {
 
     /**
      * Tests that a non-empty roster result empties the store.
+     * @throws SmackException 
+     * @throws XMPPException 
      */
     @Test(timeout = 5000)
-    public void testOtherVersionStored() throws InterruptedException {
+    public void testOtherVersionStored() throws InterruptedException, XMPPException, SmackException {
         connection.getRoster().reload();
 
         Item vaglafItem = vaglafItem();

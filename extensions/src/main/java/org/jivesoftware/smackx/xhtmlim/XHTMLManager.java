@@ -18,16 +18,15 @@
 package org.jivesoftware.smackx.xhtmlim;
 
 import org.jivesoftware.smack.ConnectionCreationListener;
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
-import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
 import org.jivesoftware.smackx.xhtmlim.packet.XHTMLExtension;
 
-import java.util.Iterator;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.List;
 
 /**
  * Manages XHTML formatted texts within messages. A XHTMLManager provides a high level access to 
@@ -37,16 +36,13 @@ import java.util.logging.Logger;
  * @author Gaston Dombiak
  */
 public class XHTMLManager {
-
-    private static final Logger LOGGER = Logger.getLogger(XHTMLManager.class.getName());
-    
     private final static String namespace = "http://jabber.org/protocol/xhtml-im";
 
     // Enable the XHTML support on every established connection
     // The ServiceDiscoveryManager class should have been already initialized
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 XHTMLManager.setServiceEnabled(connection, true);
             }
         });
@@ -59,7 +55,7 @@ public class XHTMLManager {
      * @param message an XHTML message
      * @return an Iterator for the bodies in the message or null if none.
      */
-    public static Iterator<String> getBodies(Message message) {
+    public static List<String> getBodies(Message message) {
         XHTMLExtension xhtmlExtension = (XHTMLExtension) message.getExtension("html", namespace);
         if (xhtmlExtension != null)
             return xhtmlExtension.getBodies();
@@ -103,7 +99,7 @@ public class XHTMLManager {
      * @param connection the connection where the service will be enabled or disabled
      * @param enabled indicates if the service will be enabled or disabled 
      */
-    public synchronized static void setServiceEnabled(Connection connection, boolean enabled) {
+    public synchronized static void setServiceEnabled(XMPPConnection connection, boolean enabled) {
         if (isServiceEnabled(connection) == enabled)
             return;
 
@@ -121,7 +117,7 @@ public class XHTMLManager {
      * @param connection the connection to look for XHTML support
      * @return a boolean indicating if the XHTML support is enabled for the given connection
      */
-    public static boolean isServiceEnabled(Connection connection) {
+    public static boolean isServiceEnabled(XMPPConnection connection) {
         return ServiceDiscoveryManager.getInstanceFor(connection).includesFeature(namespace);
     }
 
@@ -131,16 +127,12 @@ public class XHTMLManager {
      * @param connection the connection to use to perform the service discovery
      * @param userID the user to check. A fully qualified xmpp ID, e.g. jdoe@example.com
      * @return a boolean indicating whether the specified user handles XHTML messages
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static boolean isServiceEnabled(Connection connection, String userID) {
-        try {
-            DiscoverInfo result =
-                ServiceDiscoveryManager.getInstanceFor(connection).discoverInfo(userID);
-            return result.containsFeature(namespace);
-        }
-        catch (XMPPException e) {
-            LOGGER.log(Level.SEVERE, "Error checking if service is available", e);
-            return false;
-        }
+    public static boolean isServiceEnabled(XMPPConnection connection, String userID)
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
+        return ServiceDiscoveryManager.getInstanceFor(connection).supportsFeature(userID, namespace);
     }
 }

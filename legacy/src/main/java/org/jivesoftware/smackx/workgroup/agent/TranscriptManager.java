@@ -19,8 +19,10 @@ package org.jivesoftware.smackx.workgroup.agent;
 
 import org.jivesoftware.smackx.workgroup.packet.Transcript;
 import org.jivesoftware.smackx.workgroup.packet.Transcripts;
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 
 /**
  * A TranscriptManager helps to retrieve the full conversation transcript of a given session
@@ -30,9 +32,9 @@ import org.jivesoftware.smack.XMPPException;
  * @author Gaston Dombiak
  */
 public class TranscriptManager {
-    private Connection connection;
+    private XMPPConnection connection;
 
-    public TranscriptManager(Connection connection) {
+    public TranscriptManager(XMPPConnection connection) {
         this.connection = connection;
     }
 
@@ -42,9 +44,11 @@ public class TranscriptManager {
      * @param sessionID the id of the session to get the full transcript.
      * @param workgroupJID the JID of the workgroup that will process the request.
      * @return the full conversation transcript of a given session.
-     * @throws XMPPException if an error occurs while getting the information.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public Transcript getTranscript(String workgroupJID, String sessionID) throws XMPPException {
+    public Transcript getTranscript(String workgroupJID, String sessionID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         Transcript request = new Transcript(sessionID);
         request.setTo(workgroupJID);
         Transcript response = (Transcript) connection.createPacketCollectorAndSend(request).nextResultOrThrow();
@@ -58,9 +62,11 @@ public class TranscriptManager {
      * @param userID the id of the user to get his conversations.
      * @param workgroupJID the JID of the workgroup that will process the request.
      * @return the transcripts of a given user.
-     * @throws XMPPException if an error occurs while getting the information.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException
+     * @throws NotConnectedException 
      */
-    public Transcripts getTranscripts(String workgroupJID, String userID) throws XMPPException {
+    public Transcripts getTranscripts(String workgroupJID, String userID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         Transcripts request = new Transcripts(userID);
         request.setTo(workgroupJID);
         Transcripts response = (Transcripts) connection.createPacketCollectorAndSend(request).nextResultOrThrow();

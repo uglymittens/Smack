@@ -14,18 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smackx.disco.packet;
 
 import org.jivesoftware.smack.packet.IQ;
-import org.jivesoftware.smack.util.StringUtils;
+import org.jivesoftware.smack.util.XmlStringBuilder;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * A DiscoverInfo IQ packet, which is used by XMPP clients to request and receive information 
@@ -36,12 +33,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * @author Gaston Dombiak
  */
-public class DiscoverInfo extends IQ {
+public class DiscoverInfo extends IQ implements Cloneable {
 
     public static final String NAMESPACE = "http://jabber.org/protocol/disco#info";
 
-    private final List<Feature> features = new CopyOnWriteArrayList<Feature>();
-    private final List<Identity> identities = new CopyOnWriteArrayList<Identity>();
+    private final List<Feature> features = new LinkedList<Feature>();
+    private final List<Identity> identities = new LinkedList<Identity>();
     private String node;
 
     public DiscoverInfo() {
@@ -60,17 +57,13 @@ public class DiscoverInfo extends IQ {
         setNode(d.getNode());
 
         // Copy features
-        synchronized (d.features) {
-            for (Feature f : d.features) {
-                addFeature(f);
-            }
+        for (Feature f : d.features) {
+            addFeature(f.clone());
         }
 
         // Copy identities
-        synchronized (d.identities) {
-            for (Identity i : d.identities) {
-                addIdentity(i);
-            }
+        for (Identity i : d.identities) {
+            addIdentity(i.clone());
         }
     }
 
@@ -96,20 +89,16 @@ public class DiscoverInfo extends IQ {
     }
 
     private void addFeature(Feature feature) {
-        synchronized (features) {
-            features.add(feature);
-        }
+        features.add(feature);
     }
 
     /**
      * Returns the discovered features of an XMPP entity.
      *
-     * @return an Iterator on the discovered features of an XMPP entity
+     * @return an unmodifiable list of the discovered features of an XMPP entity
      */
-    public Iterator<Feature> getFeatures() {
-        synchronized (features) {
-            return Collections.unmodifiableList(features).iterator();
-        }
+    public List<Feature> getFeatures() {
+        return Collections.unmodifiableList(features);
     }
 
     /**
@@ -118,9 +107,7 @@ public class DiscoverInfo extends IQ {
      * @param identity the discovered entity's identity
      */
     public void addIdentity(Identity identity) {
-        synchronized (identities) {
-            identities.add(identity);
-        }
+        identities.add(identity);
     }
 
     /**
@@ -130,20 +117,16 @@ public class DiscoverInfo extends IQ {
      */
     public void addIdentities(Collection<Identity> identitiesToAdd) {
         if (identitiesToAdd == null) return;
-        synchronized (identities) {
-            identities.addAll(identitiesToAdd);
-        }
+        identities.addAll(identitiesToAdd);
     }
 
     /**
      * Returns the discovered identities of an XMPP entity.
      * 
-     * @return an Iterator on the discoveted identities 
+     * @return an unmodifiable list of the discovered identities
      */
-    public Iterator<Identity> getIdentities() {
-        synchronized (identities) {
-            return Collections.unmodifiableList(identities).iterator();
-        }
+    public List<Identity> getIdentities() {
+        return Collections.unmodifiableList(identities);
     }
 
     /**
@@ -179,36 +162,30 @@ public class DiscoverInfo extends IQ {
      * @return true if the requestes feature has been discovered
      */
     public boolean containsFeature(String feature) {
-        for (Iterator<Feature> it = getFeatures(); it.hasNext();) {
-            if (feature.equals(it.next().getVar()))
+        for (Feature f : getFeatures()) {
+            if (feature.equals(f.getVar()))
                 return true;
         }
         return false;
     }
 
-    public String getChildElementXML() {
-        StringBuilder buf = new StringBuilder();
-        buf.append("<query xmlns=\"" + NAMESPACE + "\"");
-        if (getNode() != null) {
-            buf.append(" node=\"");
-            buf.append(StringUtils.escapeForXML(getNode()));
-            buf.append("\"");
+    @Override
+    public CharSequence getChildElementXML() {
+        XmlStringBuilder xml = new XmlStringBuilder();
+        xml.halfOpenElement("query");
+        xml.xmlnsAttribute(NAMESPACE);
+        xml.optAttribute("node", getNode());
+        xml.rightAngelBracket();
+        for (Identity identity : identities) {
+            xml.append(identity.toXML());
         }
-        buf.append(">");
-        synchronized (identities) {
-            for (Identity identity : identities) {
-                buf.append(identity.toXML());
-            }
-        }
-        synchronized (features) {
-            for (Feature feature : features) {
-                buf.append(feature.toXML());
-            }
+        for (Feature feature : features) {
+            xml.append(feature.toXML());
         }
         // Add packet extensions, if any are defined.
-        buf.append(getExtensionsXML());
-        buf.append("</query>");
-        return buf.toString();
+        xml.append(getExtensionsXML());
+        xml.closeElement("query");
+        return xml;
     }
 
     /**
@@ -245,6 +222,11 @@ public class DiscoverInfo extends IQ {
         return false;
     }
 
+    @Override
+    public DiscoverInfo clone() {
+        return new DiscoverInfo(this);
+    }
+
     /**
      * Represents the identity of a given XMPP entity. An entity may have many identities but all
      * the identities SHOULD have the same name.<p>
@@ -254,25 +236,18 @@ public class DiscoverInfo extends IQ {
      * attributes.
      * 
      */
-    public static class Identity implements Comparable<Identity> {
+    public static class Identity implements Comparable<Identity>, Cloneable {
 
-        private String category;
+        private final String category;
         private String name;
-        private String type;
+        private final String type;
         private String lang; // 'xml:lang;
 
-        /**
-         * Creates a new identity for an XMPP entity.
-         * 
-         * @param category the entity's category.
-         * @param name the entity's name.
-         * @deprecated As per the spec, the type field is mandatory and the 3 argument constructor should be used instead.
-         */
-        public Identity(String category, String name) {
-            this.category = category;
-            this.name = name;
+        public Identity(Identity identity) {
+            this(identity.category, identity.name, identity.type);
+            lang = identity.lang;
         }
-        
+
         /**
          * Creates a new identity for an XMPP entity.
          * 'category' and 'type' are required by 
@@ -330,17 +305,6 @@ public class DiscoverInfo extends IQ {
         }
 
         /**
-         * Sets the entity's type. To get the official registry of values for the 
-         * 'type' attribute refer to <a href="http://www.jabber.org/registrar/disco-categories.html">Jabber::Registrar</a> 
-         *
-         * @param type the identity's type.
-         * @deprecated As per the spec, this field is mandatory and the 3 argument constructor should be used instead.
-         */
-        public void setType(String type) {
-            this.type = type;
-        }
-
-        /**
          * Sets the natural language (xml:lang) for this identity (optional)
          * 
          * @param lang the xml:lang of this Identity
@@ -358,22 +322,15 @@ public class DiscoverInfo extends IQ {
             return lang;
         }
 
-        public String toXML() {
-            StringBuilder buf = new StringBuilder();
-            buf.append("<identity");
-            // Check if this packet has 'lang' set and maybe append it to the resulting string
-            if (lang != null)
-                buf.append(" xml:lang=\"").append(StringUtils.escapeForXML(lang)).append("\"");
-            // Category must always be set
-            buf.append(" category=\"").append(StringUtils.escapeForXML(category)).append("\"");
-            // Name must always be set
-            buf.append(" name=\"").append(StringUtils.escapeForXML(name)).append("\"");
-            // Check if this packet has 'type' set and maybe append it to the resulting string
-            if (type != null) {
-                buf.append(" type=\"").append(StringUtils.escapeForXML(type)).append("\"");
-            }
-            buf.append("/>");
-            return buf.toString();
+        public XmlStringBuilder toXML() {
+            XmlStringBuilder xml = new XmlStringBuilder();
+            xml.halfOpenElement("identity");
+            xml.xmllangAttribute(lang);
+            xml.attribute("category", category);
+            xml.attribute("name", name);
+            xml.optAttribute("type", type);
+            xml.closeEmptyElement();
+            return xml;
         }
 
         /** 
@@ -412,7 +369,7 @@ public class DiscoverInfo extends IQ {
 
             return true;
         }
-        
+
         @Override
         public int hashCode() {
             int result = 1;
@@ -424,12 +381,13 @@ public class DiscoverInfo extends IQ {
         }
 
         /**
-         * Compares this identity with another one. The comparison order is:
-         * Category, Type, Lang. If all three are identical the other Identity is considered equal.
-         * Name is not used for comparision, as defined by XEP-0115
+         * Compares this identity with another one. The comparison order is: Category, Type, Lang.
+         * If all three are identical the other Identity is considered equal. Name is not used for
+         * comparison, as defined by XEP-0115
          * 
-         * @param obj
-         * @return
+         * @param other
+         * @return a negative integer, zero, or a positive integer as this object is less than,
+         *         equal to, or greater than the specified object.
          */
         public int compareTo(DiscoverInfo.Identity other) {
             String otherLang = other.lang == null ? "" : other.lang;
@@ -455,6 +413,11 @@ public class DiscoverInfo extends IQ {
                 return category.compareTo(other.category);
             }
         }
+
+        @Override
+        public Identity clone() {
+            return new Identity(this);
+        }
     }
 
     /**
@@ -463,9 +426,13 @@ public class DiscoverInfo extends IQ {
      * as well as specific feature types of interest, if any (e.g., for the purpose of feature 
      * negotiation).
      */
-    public static class Feature {
+    public static class Feature implements Cloneable {
 
-        private String variable;
+        private final String variable;
+
+        public Feature(Feature feature) {
+            this.variable = feature.variable;
+        }
 
         /**
          * Creates a new feature offered by an XMPP entity or item.
@@ -487,10 +454,12 @@ public class DiscoverInfo extends IQ {
             return variable;
         }
 
-        public String toXML() {
-            StringBuilder buf = new StringBuilder();
-            buf.append("<feature var=\"").append(StringUtils.escapeForXML(variable)).append("\"/>");
-            return buf.toString();
+        public XmlStringBuilder toXML() {
+            XmlStringBuilder xml = new XmlStringBuilder();
+            xml.halfOpenElement("feature");
+            xml.attribute("var", variable);
+            xml.closeEmptyElement();
+            return xml;
         }
 
         public boolean equals(Object obj) {
@@ -508,6 +477,11 @@ public class DiscoverInfo extends IQ {
         @Override
         public int hashCode() {
             return 37 * variable.hashCode();
+        }
+
+        @Override
+        public Feature clone() {
+            return new Feature(this);
         }
     }
 }

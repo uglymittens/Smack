@@ -17,8 +17,27 @@
 
 package org.jivesoftware.smack;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.SmackException.NotLoggedInException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
+import org.jivesoftware.smack.filter.IQReplyFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
-import org.jivesoftware.smack.filter.PacketIDFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
@@ -26,11 +45,6 @@ import org.jivesoftware.smack.packet.Presence;
 import org.jivesoftware.smack.packet.RosterPacket;
 import org.jivesoftware.smack.packet.RosterPacket.Item;
 import org.jivesoftware.smack.util.StringUtils;
-
-import java.util.*;
-import java.util.Map.Entry;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Represents a user's roster, which is the collection of users a person receives
@@ -44,17 +58,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * </ul>
  *
  * @author Matt Tucker
- * @see Connection#getRoster()
+ * @see XMPPConnection#getRoster()
  */
 public class Roster {
 
+    private static final Logger LOGGER = Logger.getLogger(Roster.class.getName());
     /**
      * The default subscription processing mode to use when a Roster is created. By default
      * all subscription requests are automatically accepted.
      */
     private static SubscriptionMode defaultSubscriptionMode = SubscriptionMode.accept_all;
 
-    private final Connection connection;
+    private final XMPPConnection connection;
     private final RosterStore rosterStore;
     private final Map<String, RosterGroup> groups;
     private final Map<String,RosterEntry> entries;
@@ -97,7 +112,7 @@ public class Roster {
      *
      * @param connection an XMPP connection.
      */
-    Roster(final Connection connection) {
+    Roster(final XMPPConnection connection) {
         this.connection = connection;
         rosterStore = connection.getConfiguration().getRosterStore();
         groups = new ConcurrentHashMap<String, RosterGroup>();
@@ -107,41 +122,63 @@ public class Roster {
         presenceMap = new ConcurrentHashMap<String, Map<String, Presence>>();
         // Listen for any roster packets.
         PacketFilter rosterFilter = new PacketTypeFilter(RosterPacket.class);
-        connection.addPacketListener(new RosterPacketListener(), rosterFilter);
+        connection.addPacketListener(new RosterPushListener(), rosterFilter);
         // Listen for any presence packets.
         PacketFilter presenceFilter = new PacketTypeFilter(Presence.class);
         presencePacketListener = new PresencePacketListener();
         connection.addPacketListener(presencePacketListener, presenceFilter);
-        
+
         // Listen for connection events
-        final ConnectionListener connectionListener = new AbstractConnectionListener() {
+        connection.addConnectionListener(new AbstractConnectionListener() {
             
             public void connectionClosed() {
                 // Changes the presence available contacts to unavailable
-                setOfflinePresences();
+                try {
+                    setOfflinePresences();
+                }
+                catch (NotConnectedException e) {
+                    LOGGER.log(Level.SEVERE, "Not connected exception" ,e);
+                }
             }
 
             public void connectionClosedOnError(Exception e) {
                 // Changes the presence available contacts to unavailable
-                setOfflinePresences();
+                try {
+                    setOfflinePresences();
+                }
+                catch (NotConnectedException e1) {
+                    LOGGER.log(Level.SEVERE, "Not connected exception" ,e);
+                }
             }
 
-        };
-        
-        // if not connected add listener after successful login
-        if(!this.connection.isConnected()) {
-            Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-                
-                public void connectionCreated(Connection connection) {
-                    if(connection.equals(Roster.this.connection)) {
-                        Roster.this.connection.addConnectionListener(connectionListener);
-                    }
-                    
-                }
-            });
-        } else {
-            connection.addConnectionListener(connectionListener);
+        });
+        // If the connection is already established, call reload
+        if (connection.isAuthenticated()) {
+            try {
+                reload();
+            }
+            catch (SmackException e) {
+                LOGGER.log(Level.SEVERE, "Could not reload Roster", e);
+            }
         }
+        connection.addConnectionListener(new AbstractConnectionListener() {
+            public void authenticated(XMPPConnection connection) {
+                // Anonymous users can't have a roster, but it iss possible that a Roster instance is
+                // retrieved if getRoster() is called *before* connect(). So we have to check here
+                // again if it's an anonymous connection.
+                if (connection.isAnonymous())
+                    return;
+                if (!connection.getConfiguration().isRosterLoadedAtLogin())
+                    return;
+                try {
+                    Roster.this.reload();
+                }
+                catch (SmackException e) {
+                    LOGGER.log(Level.SEVERE, "Could not reload Roster", e);
+                    return;
+                }
+            }
+        });
     }
 
     /**
@@ -178,23 +215,24 @@ public class Roster {
      * Reloads the entire roster from the server. This is an asynchronous operation,
      * which means the method will return immediately, and the roster will be
      * reloaded at a later point when the server responds to the reload request.
-     * 
-     * @throws IllegalStateException if connection is not logged in or logged in anonymously
+     * @throws NotLoggedInException If not logged in.
+     * @throws NotConnectedException 
      */
-    public void reload() {
+    public void reload() throws NotLoggedInException, NotConnectedException{
         if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Not logged in to server.");
+            throw new NotLoggedInException();
         }
         if (connection.isAnonymous()) {
             throw new IllegalStateException("Anonymous users can't have a roster.");
         }
 
+
         RosterPacket packet = new RosterPacket();
         if (rosterStore != null && connection.isRosterVersioningSupported()) {
             packet.setVersion(rosterStore.getRosterVersion());
-            PacketFilter filter = new PacketIDFilter(packet.getPacketID());
-            connection.addPacketListener(new RosterResultListener(), filter);
         }
+        PacketFilter filter = new IQReplyFilter(packet, connection);
+        connection.addPacketListener(new RosterResultListener(), filter);
         connection.sendPacket(packet);
     }
 
@@ -227,18 +265,19 @@ public class Roster {
      * after a logout/login. This is due to the way that XMPP stores group information.
      *
      * @param name the name of the group.
-     * @return a new group.
-     * @throws IllegalStateException if connection is not logged in or logged in anonymously
+     * @return a new group, or null if the group already exists
+     * @throws NotLoggedInException If not logged in.
+     * @throws IllegalStateException if logged in anonymously
      */
-    public RosterGroup createGroup(String name) {
+    public RosterGroup createGroup(String name) throws NotLoggedInException {
         if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Not logged in to server.");
+            throw new NotLoggedInException();
         }
         if (connection.isAnonymous()) {
             throw new IllegalStateException("Anonymous users can't have a roster.");
         }
         if (groups.containsKey(name)) {
-            throw new IllegalArgumentException("Group with name " + name + " alread exists.");
+            return groups.get(name);
         }
         
         RosterGroup group = new RosterGroup(name, connection);
@@ -254,12 +293,16 @@ public class Roster {
      * @param name   the nickname of the user.
      * @param groups the list of group names the entry will belong to, or <tt>null</tt> if the
      *               the roster entry won't belong to a group.
-     * @throws XMPPException if an XMPP exception occurs.
-     * @throws IllegalStateException if connection is not logged in or logged in anonymously
+     * @throws NotLoggedInException 
+     * @throws NoResponseException if there was no response from the server.
+     * @throws XMPPErrorException if an XMPP exception occurs.
+     * @throws NotLoggedInException If not logged in.
+     * @throws NotConnectedException 
+     * @throws IllegalStateException if logged in anonymously
      */
-    public void createEntry(String user, String name, String[] groups) throws XMPPException {
+    public void createEntry(String user, String name, String[] groups) throws NotLoggedInException, NoResponseException, XMPPErrorException, NotConnectedException {
         if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Not logged in to server.");
+            throw new NotLoggedInException();
         }
         if (connection.isAnonymous()) {
             throw new IllegalStateException("Anonymous users can't have a roster.");
@@ -288,16 +331,19 @@ public class Roster {
     /**
      * Removes a roster entry from the roster. The roster entry will also be removed from the
      * unfiled entries or from any roster group where it could belong and will no longer be part
-     * of the roster. Note that this is an asynchronous call -- Smack must wait for the server
+     * of the roster. Note that this is a synchronous call -- Smack must wait for the server
      * to send an updated subscription status.
      *
      * @param entry a roster entry.
-     * @throws XMPPException if an XMPP error occurs.
+     * @throws XMPPErrorException if an XMPP error occurs.
+     * @throws NotLoggedInException if not logged in.
+     * @throws NoResponseException SmackException if there was no response from the server.
+     * @throws NotConnectedException 
      * @throws IllegalStateException if connection is not logged in or logged in anonymously
      */
-    public void removeEntry(RosterEntry entry) throws XMPPException {
+    public void removeEntry(RosterEntry entry) throws NotLoggedInException, NoResponseException, XMPPErrorException, NotConnectedException {
         if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Not logged in to server.");
+            throw new NotLoggedInException();
         }
         if (connection.isAnonymous()) {
             throw new IllegalStateException("Anonymous users can't have a roster.");
@@ -376,7 +422,7 @@ public class Roster {
         if (user == null) {
             return null;
         }
-        return entries.get(user.toLowerCase());
+        return entries.get(user.toLowerCase(Locale.US));
     }
 
     /**
@@ -536,17 +582,18 @@ public class Roster {
      * updates.
      *
      * @param user a XMPP ID, e.g. jdoe@example.com.
-     * @return an iterator (of Presence objects) for all the user's current presences,
+     * @return an Collection (of Presence objects) for all the user's current presences,
      *         or an unavailable presence if the user is offline or if no presence information
      *         is available.
      */
-    public Iterator<Presence> getPresences(String user) {
+    public Collection<Presence> getPresences(String user) {
+        Collection<Presence> res;
         String key = getPresenceMapKey(user);
         Map<String, Presence> userPresences = presenceMap.get(key);
         if (userPresences == null) {
             Presence presence = new Presence(Presence.Type.unavailable);
             presence.setFrom(user);
-            return Arrays.asList(presence).iterator();
+            res = Arrays.asList(presence);
         }
         else {
             Collection<Presence> answer = new ArrayList<Presence>();
@@ -556,14 +603,15 @@ public class Roster {
                 }
             }
             if (!answer.isEmpty()) {
-                return answer.iterator();
+                res = answer;
             }
             else {
                 Presence presence = new Presence(Presence.Type.unavailable);
                 presence.setFrom(user);
-                return Arrays.asList(presence).iterator();    
+                res = Arrays.asList(presence);
             }
         }
+        return Collections.unmodifiableCollection(res);
     }
 
     /**
@@ -587,15 +635,16 @@ public class Roster {
         if (!contains(user)) {
             key = StringUtils.parseBareAddress(user);
         }
-        return key.toLowerCase();
+        return key.toLowerCase(Locale.US);
     }
 
     /**
      * Changes the presence of available contacts offline by simulating an unavailable
      * presence sent from the server. After a disconnection, every Presence is set
      * to offline.
+     * @throws NotConnectedException 
      */
-    private void setOfflinePresences() {
+    private void setOfflinePresences() throws NotConnectedException {
         Presence packetUnavailable;
         for (String user : presenceMap.keySet()) {
             Map<String, Presence> resources = presenceMap.get(user);
@@ -646,7 +695,7 @@ public class Roster {
 
     private void addUpdateEntry(Collection<String> addedEntries,
             Collection<String> updatedEntries, RosterPacket.Item item,
-            RosterEntry entry) {
+            RosterEntry entry) throws SmackException {
         RosterEntry oldEntry = entries.put(item.getUser(), entry);
         if (oldEntry == null) {
             addedEntries.add(item.getUser());
@@ -720,6 +769,37 @@ public class Roster {
 
 
     /**
+     * Removes all the groups with no entries.
+     *
+     * This is used by {@link RosterPushListener} and {@link RosterResultListener} to
+     * cleanup groups after removing contacts.
+     */
+    private void removeEmptyGroups() {
+        // We have to do this because RosterGroup.removeEntry removes the entry immediately
+        // (locally) and the group could remain empty.
+        // TODO Check the performance/logic for rosters with large number of groups
+        for (RosterGroup group : getGroups()) {
+            if (group.getEntryCount() == 0) {
+                groups.remove(group.getName());
+            }
+        }
+    }
+
+    /**
+     * Ignore ItemTypes as of RFC 6121, 2.1.2.5.
+     *
+     * This is used by {@link RosterPushListener} and {@link RosterResultListener}.
+     * */
+    private boolean hasValidSubscriptionType(RosterPacket.Item item) {
+        return item.getItemType().equals(RosterPacket.ItemType.none)
+                || item.getItemType().equals(RosterPacket.ItemType.from)
+                || item.getItemType().equals(RosterPacket.ItemType.to)
+                || item.getItemType().equals(RosterPacket.ItemType.both);
+    }
+
+
+
+    /**
      * An enumeration for the subscription mode options.
      */
     public enum SubscriptionMode {
@@ -750,7 +830,7 @@ public class Roster {
      */
     private class PresencePacketListener implements PacketListener {
 
-        public void processPacket(Packet packet) {
+        public void processPacket(Packet packet) throws NotConnectedException {
             Presence presence = (Presence) packet;
             String from = presence.getFrom();
             String key = getPresenceMapKey(from);
@@ -871,121 +951,46 @@ public class Roster {
         @Override
         public void processPacket(Packet packet) {
             connection.removePacketListener(this);
-            if (packet instanceof RosterPacket) {
-                // Non-empty roster results are processed by the RosterPacketListener class
-                return;
-            }
             if (!(packet instanceof IQ)) {
                 return;
             }
             IQ result = (IQ)packet;
-            if(result.getType().equals(IQ.Type.RESULT)){
-                Collection<String> addedEntries = new ArrayList<String>();
-                Collection<String> updatedEntries = new ArrayList<String>();
-                for(RosterPacket.Item item : rosterStore.getEntries()){
-                    RosterEntry entry = new RosterEntry(item.getUser(), item.getName(),
-                            item.getItemType(), item.getItemStatus(), Roster.this, connection);
-                    addUpdateEntry(addedEntries,updatedEntries,item,entry);
-                }
-
-                synchronized (Roster.this) {
-                    rosterInitialized = true;
-                    Roster.this.notifyAll();
-                }
-                fireRosterChangedEvent(addedEntries,updatedEntries,
-                        Collections.<String>emptyList());
+            if (!result.getType().equals(IQ.Type.RESULT)) {
+                return;
             }
-        }
 
-    }
-
-    /**
-     * Listens for all roster packets and processes them.
-     */
-    private class RosterPacketListener implements PacketListener {
-
-        public void processPacket(Packet packet) {
-            RosterPacket rosterPacket = (RosterPacket) packet;
             Collection<String> addedEntries = new ArrayList<String>();
             Collection<String> updatedEntries = new ArrayList<String>();
             Collection<String> deletedEntries = new ArrayList<String>();
 
-            String version = rosterPacket.getVersion();
-
-            if (rosterPacket.getType().equals(IQ.Type.SET)) {
-                // Roster push (RFC 6121, 2.1.6)
-                // A roster push with a non-empty from not matching our address MUST be ignored
-                String jid = StringUtils.parseBareAddress(connection.getUser());
-                if (rosterPacket.getFrom() != null &&
-                        !rosterPacket.getFrom().equals(jid)) {
-                    return;
+            try {
+                if (packet instanceof RosterPacket) {
+                    nonemptyResult((RosterPacket) packet, addedEntries, updatedEntries, deletedEntries);
+                } else {
+                    emptyResult(addedEntries, updatedEntries);
                 }
-
-                // A roster push must contain exactly one entry
-                Collection<Item> items = rosterPacket.getRosterItems();
-                if (items.size() != 1) {
-                    return;
-                }
-                Item item = items.iterator().next();
-                processPushItem(addedEntries, updatedEntries, deletedEntries, version, item);
-
-                connection.sendPacket(IQ.createResultIQ(rosterPacket));
-            }
-            else {
-                // Roster result (RFC 6121, 2.1.4)
-
-                // Ignore items without valid subscription type
-                ArrayList<Item> validItems = new ArrayList<RosterPacket.Item>();
-                for (RosterPacket.Item item : rosterPacket.getRosterItems()) {
-                    if (hasValidSubscriptionType(item)) {
-                        validItems.add(item);
-                    }
-                }
-
-                processResult(addedEntries, updatedEntries, deletedEntries, version, validItems);
+            } catch (SmackException e) {
+                return;
             }
 
-            // Remove all the groups with no entries. We have to do this because
-            // RosterGroup.removeEntry removes the entry immediately (locally) and the
-            // group could remain empty.
-            // TODO Check the performance/logic for rosters with large number of groups
-            for (RosterGroup group : getGroups()) {
-                if (group.getEntryCount() == 0) {
-                    groups.remove(group.getName());
-                }
-            }
-
-            // Mark the roster as initialized.
             synchronized (Roster.this) {
                 rosterInitialized = true;
                 Roster.this.notifyAll();
             }
-
             // Fire event for roster listeners.
             fireRosterChangedEvent(addedEntries, updatedEntries, deletedEntries);
         }
 
-        private void processPushItem(Collection<String> addedEntries, Collection<String> updatedEntries,
-                Collection<String> deletedEntries, String version, Item item) {
-            RosterEntry entry = new RosterEntry(item.getUser(), item.getName(),
-                    item.getItemType(), item.getItemStatus(), Roster.this, connection);
-
-            if (item.getItemType().equals(RosterPacket.ItemType.remove)) {
-                deleteEntry(deletedEntries, entry);
-                if (rosterStore != null) {
-                    rosterStore.removeEntry(entry.getUser(), version);
-                }
-            }
-            else if (hasValidSubscriptionType(item)) {
-                addUpdateEntry(addedEntries, updatedEntries, item, entry);
-                if (rosterStore != null) {
-                    rosterStore.addEntry(item, version);
-                }
+        private void emptyResult(Collection<String> addedEntries, Collection<String> updatedEntries) throws SmackException {
+            for(RosterPacket.Item item : rosterStore.getEntries()){
+                RosterEntry entry = new RosterEntry(item.getUser(), item.getName(),
+                        item.getItemType(), item.getItemStatus(), Roster.this, connection);
+                addUpdateEntry(addedEntries,updatedEntries,item,entry);
             }
         }
 
-        private void processResult(Collection<String> addedEntries, Collection<String> updatedEntries,
-                Collection<String> deletedEntries, String version, Collection<Item> items) {
+        private void addEntries(Collection<String> addedEntries, Collection<String> updatedEntries,
+                Collection<String> deletedEntries, String version, Collection<Item> items) throws SmackException {
             for (RosterPacket.Item item : items) {
                 RosterEntry entry = new RosterEntry(item.getUser(), item.getName(),
                         item.getItemType(), item.getItemStatus(), Roster.this, connection);
@@ -1002,18 +1007,99 @@ public class Roster {
             for (String user : toDelete) {
                 deleteEntry(deletedEntries, entries.get(user));
             }
-            
+
             if (rosterStore != null) {
                 rosterStore.resetEntries(items, version);
             }
         }
 
-        /* Ignore ItemTypes as of RFC 6121, 2.1.2.5. */
-        private boolean hasValidSubscriptionType(RosterPacket.Item item) {
-            return item.getItemType().equals(RosterPacket.ItemType.none)
-                    || item.getItemType().equals(RosterPacket.ItemType.from)
-                    || item.getItemType().equals(RosterPacket.ItemType.to)
-                    || item.getItemType().equals(RosterPacket.ItemType.both);
+        private void nonemptyResult(RosterPacket packet, Collection<String> addedEntries,
+                        Collection<String> updatedEntries, Collection<String> deletedEntries)
+                        throws SmackException {
+            RosterPacket rosterPacket = (RosterPacket) packet;
+
+            String version = rosterPacket.getVersion();
+
+            // Ignore items without valid subscription type
+            ArrayList<Item> validItems = new ArrayList<RosterPacket.Item>();
+            for (RosterPacket.Item item : rosterPacket.getRosterItems()) {
+                if (hasValidSubscriptionType(item)) {
+                    validItems.add(item);
+                }
+            }
+
+            addEntries(addedEntries, updatedEntries, deletedEntries, version, validItems);
+
+            removeEmptyGroups();
+        }
+
+
+    }
+
+    /**
+     * Listens for all roster pushes and processes them.
+     */
+    private class RosterPushListener implements PacketListener {
+
+        public void processPacket(Packet packet) throws NotConnectedException {
+            RosterPacket rosterPacket = (RosterPacket) packet;
+            if (!rosterPacket.getType().equals(IQ.Type.SET)) {
+                return;
+            }
+
+            String version = rosterPacket.getVersion();
+
+            // Roster push (RFC 6121, 2.1.6)
+            // A roster push with a non-empty from not matching our address MUST be ignored
+            String jid = StringUtils.parseBareAddress(connection.getUser());
+            if (rosterPacket.getFrom() != null &&
+                    !rosterPacket.getFrom().equals(jid)) {
+                return;
+            }
+
+            // A roster push must contain exactly one entry
+            Collection<Item> items = rosterPacket.getRosterItems();
+            if (items.size() != 1) {
+                return;
+            }
+
+            Collection<String> addedEntries = new ArrayList<String>();
+            Collection<String> updatedEntries = new ArrayList<String>();
+            Collection<String> deletedEntries = new ArrayList<String>();
+
+            Item item = items.iterator().next();
+            try {
+                processPushItem(addedEntries, updatedEntries, deletedEntries, version, item);
+            }
+            catch (SmackException e) {
+                return;
+            }
+
+            connection.sendPacket(IQ.createResultIQ(rosterPacket));
+
+            removeEmptyGroups();
+
+            // Fire event for roster listeners.
+            fireRosterChangedEvent(addedEntries, updatedEntries, deletedEntries);
+        }
+
+        private void processPushItem(Collection<String> addedEntries, Collection<String> updatedEntries,
+                Collection<String> deletedEntries, String version, Item item) throws SmackException {
+            RosterEntry entry = new RosterEntry(item.getUser(), item.getName(),
+                    item.getItemType(), item.getItemStatus(), Roster.this, connection);
+
+            if (item.getItemType().equals(RosterPacket.ItemType.remove)) {
+                deleteEntry(deletedEntries, entry);
+                if (rosterStore != null) {
+                    rosterStore.removeEntry(entry.getUser(), version);
+                }
+            }
+            else if (hasValidSubscriptionType(item)) {
+                addUpdateEntry(addedEntries, updatedEntries, item, entry);
+                if (rosterStore != null) {
+                    rosterStore.addEntry(item, version);
+                }
+            }
         }
 
     }

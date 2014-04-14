@@ -35,20 +35,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.SmackConfiguration;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException;
 
 /**
  * The Socks5Proxy class represents a local SOCKS5 proxy server. It can be enabled/disabled by
- * setting the <code>localSocks5ProxyEnabled</code> flag in the <code>smack-config.xml</code> or by
- * invoking {@link SmackConfiguration#setLocalSocks5ProxyEnabled(boolean)}. The proxy is enabled by
- * default.
+ * invoking {@link #setLocalSocks5ProxyEnabled(boolean)}. The proxy is enabled by default.
  * <p>
- * The port of the local SOCKS5 proxy can be configured by setting <code>localSocks5ProxyPort</code>
- * in the <code>smack-config.xml</code> or by invoking
- * {@link SmackConfiguration#setLocalSocks5ProxyPort(int)}. Default port is 7777. If you set the
- * port to a negative value Smack tries to the absolute value and all following until it finds an
- * open port.
+ * The port of the local SOCKS5 proxy can be configured by invoking
+ * {@link #setLocalSocks5ProxyPort(int)}. Default port is 7777. If you set the port to a negative
+ * value Smack tries to the absolute value and all following until it finds an open port.
  * <p>
  * If your application is running on a machine with multiple network interfaces or if you want to
  * provide your public address in case you are behind a NAT router, invoke
@@ -397,17 +392,17 @@ public class Socks5Proxy {
          * Negotiates a SOCKS5 connection and stores it on success.
          * 
          * @param socket connection to the client
-         * @throws XMPPException if client requests a connection in an unsupported way
+         * @throws SmackException if client requests a connection in an unsupported way
          * @throws IOException if a network error occurred
          */
-        private void establishConnection(Socket socket) throws XMPPException, IOException {
+        private void establishConnection(Socket socket) throws SmackException, IOException {
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             DataInputStream in = new DataInputStream(socket.getInputStream());
 
             // first byte is version should be 5
             int b = in.read();
             if (b != 5) {
-                throw new XMPPException("Only SOCKS5 supported");
+                throw new SmackException("Only SOCKS5 supported");
             }
 
             // second byte number of authentication methods supported
@@ -433,7 +428,7 @@ public class Socks5Proxy {
                 authMethodSelectionResponse[1] = (byte) 0xFF; // no acceptable methods
                 out.write(authMethodSelectionResponse);
                 out.flush();
-                throw new XMPPException("Authentication method not supported");
+                throw new SmackException("Authentication method not supported");
             }
 
             authMethodSelectionResponse[1] = (byte) 0x00; // no-authentication method
@@ -452,7 +447,7 @@ public class Socks5Proxy {
                 out.write(connectionRequest);
                 out.flush();
 
-                throw new XMPPException("Connection is not allowed");
+                throw new SmackException("Connection is not allowed");
             }
 
             connectionRequest[1] = (byte) 0x00; // set return status to 0 (success)

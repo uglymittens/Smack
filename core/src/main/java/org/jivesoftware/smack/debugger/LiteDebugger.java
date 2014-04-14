@@ -39,7 +39,7 @@ public class LiteDebugger implements SmackDebugger {
     private static final String NEWLINE = "\n";
 
     private JFrame frame = null;
-    private Connection connection = null;
+    private XMPPConnection connection = null;
 
     private PacketListener listener = null;
 
@@ -48,7 +48,7 @@ public class LiteDebugger implements SmackDebugger {
     private ReaderListener readerListener;
     private WriterListener writerListener;
 
-    public LiteDebugger(Connection connection, Writer writer, Reader reader) {
+    public LiteDebugger(XMPPConnection connection, Writer writer, Reader reader) {
         this.connection = connection;
         this.writer = writer;
         this.reader = reader;
@@ -241,8 +241,8 @@ public class LiteDebugger implements SmackDebugger {
         // data as Smack sees it and not as it's coming in as raw XML.
         listener = new PacketListener() {
             public void processPacket(Packet packet) {
-                interpretedText1.append(packet.toXML());
-                interpretedText2.append(packet.toXML());
+                interpretedText1.append(packet.toXML().toString());
+                interpretedText2.append(packet.toXML().toString());
                 interpretedText1.append(NEWLINE);
                 interpretedText2.append(NEWLINE);
             }

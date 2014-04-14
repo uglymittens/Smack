@@ -20,9 +20,10 @@ package org.jivesoftware.smack;
 import java.io.StringReader;
 
 import org.jivesoftware.smack.sasl.SASLMechanism.Challenge;
-import org.jivesoftware.smack.sasl.SASLMechanism.Failure;
+import org.jivesoftware.smack.sasl.SASLMechanism.SASLFailure;
 import org.jivesoftware.smack.sasl.SASLMechanism.Success;
 import org.jivesoftware.smack.util.PacketParserUtils;
+import org.jivesoftware.smack.XMPPException.StreamErrorException;
 import org.xmlpull.v1.XmlPullParserFactory;
 import org.xmlpull.v1.XmlPullParser;
 import org.igniterealtime.jbosh.AbstractBody;
@@ -39,7 +40,7 @@ import org.igniterealtime.jbosh.ComposableBody;
  */
 public class BOSHPacketReader implements BOSHClientResponseListener {
 
-    private BOSHConnection connection;
+    private XMPPBOSHConnection connection;
 
     /**
      * Create a packet reader which listen on a BOSHConnection for received
@@ -47,7 +48,7 @@ public class BOSHPacketReader implements BOSHClientResponseListener {
      * 
      * @param connection the corresponding connection for the received packets.
      */
-    public BOSHPacketReader(BOSHConnection connection) {
+    public BOSHPacketReader(XMPPBOSHConnection connection) {
         this.connection = connection;
     }
 
@@ -61,10 +62,10 @@ public class BOSHPacketReader implements BOSHClientResponseListener {
         if (body != null) {
             try {
                 if (connection.sessionID == null) {
-                    connection.sessionID = body.getAttribute(BodyQName.create(BOSHConnection.BOSH_URI, "sid"));
+                    connection.sessionID = body.getAttribute(BodyQName.create(XMPPBOSHConnection.BOSH_URI, "sid"));
                 }
                 if (connection.authID == null) {
-                    connection.authID = body.getAttribute(BodyQName.create(BOSHConnection.BOSH_URI, "authid"));
+                    connection.authID = body.getAttribute(BodyQName.create(XMPPBOSHConnection.BOSH_URI, "authid"));
                 }
                 final XmlPullParser parser = XmlPullParserFactory.newInstance().newPullParser();
                 parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES,
@@ -92,12 +93,12 @@ public class BOSHPacketReader implements BOSHClientResponseListener {
                                     challengeData));
                         } else if (parser.getName().equals("success")) {
                             connection.send(ComposableBody.builder()
-                                    .setNamespaceDefinition("xmpp", BOSHConnection.XMPP_BOSH_NS)
+                                    .setNamespaceDefinition("xmpp", XMPPBOSHConnection.XMPP_BOSH_NS)
                                     .setAttribute(
-                                            BodyQName.createWithPrefix(BOSHConnection.XMPP_BOSH_NS, "restart", "xmpp"),
+                                            BodyQName.createWithPrefix(XMPPBOSHConnection.XMPP_BOSH_NS, "restart", "xmpp"),
                                             "true")
                                     .setAttribute(
-                                            BodyQName.create(BOSHConnection.BOSH_URI, "to"),
+                                            BodyQName.create(XMPPBOSHConnection.BOSH_URI, "to"),
                                             connection.getServiceName())
                                     .build());
                             connection.getSASLAuthentication().authenticated();
@@ -106,12 +107,12 @@ public class BOSHPacketReader implements BOSHClientResponseListener {
                             parseFeatures(parser);
                         } else if (parser.getName().equals("failure")) {
                             if ("urn:ietf:params:xml:ns:xmpp-sasl".equals(parser.getNamespace(null))) {
-                                final Failure failure = PacketParserUtils.parseSASLFailure(parser);
-                                connection.getSASLAuthentication().authenticationFailed(failure.getCondition());
+                                final SASLFailure failure = PacketParserUtils.parseSASLFailure(parser);
+                                connection.getSASLAuthentication().authenticationFailed(failure);
                                 connection.processPacket(failure);
                             }
                         } else if (parser.getName().equals("error")) {
-                            throw new XMPPException(PacketParserUtils.parseStreamError(parser));
+                            throw new StreamErrorException(PacketParserUtils.parseStreamError(parser));
                         }
                     }
                 } while (eventType != XmlPullParser.END_DOCUMENT);
@@ -152,8 +153,7 @@ public class BOSHPacketReader implements BOSHClientResponseListener {
                     // The server supports sessions
                     connection.getSASLAuthentication().sessionsSupported();
                 } else if (parser.getName().equals("register")) {
-                    connection.getAccountManager().setSupportsAccountCreation(
-                            true);
+                    AccountManager.getInstance(connection).setSupportsAccountCreation(true);
                 }
             } else if (eventType == XmlPullParser.END_TAG) {
                 if (parser.getName().equals("features")) {

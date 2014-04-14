@@ -20,7 +20,8 @@ package org.jivesoftware.smackx.workgroup.agent;
 import org.jivesoftware.smackx.workgroup.packet.AgentStatus;
 import org.jivesoftware.smackx.workgroup.packet.AgentStatusRequest;
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.Packet;
@@ -33,6 +34,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
@@ -49,7 +51,7 @@ public class AgentRoster {
     private static final int EVENT_AGENT_REMOVED = 1;
     private static final int EVENT_PRESENCE_CHANGED = 2;
 
-    private Connection connection;
+    private XMPPConnection connection;
     private String workgroupJID;
     private List<String> entries;
     private List<AgentRosterListener> listeners;
@@ -62,8 +64,9 @@ public class AgentRoster {
      * Constructs a new AgentRoster.
      *
      * @param connection an XMPP connection.
+     * @throws NotConnectedException 
      */
-    AgentRoster(Connection connection, String workgroupJID) {
+    AgentRoster(XMPPConnection connection, String workgroupJID) throws NotConnectedException {
         this.connection = connection;
         this.workgroupJID = workgroupJID;
         entries = new ArrayList<String>();
@@ -86,8 +89,9 @@ public class AgentRoster {
      * Reloads the entire roster from the server. This is an asynchronous operation,
      * which means the method will return immediately, and the roster will be
      * reloaded at a later point when the server responds to the reload request.
+     * @throws NotConnectedException 
      */
-    public void reload() {
+    public void reload() throws NotConnectedException {
         AgentStatusRequest request = new AgentStatusRequest();
         request.setTo(workgroupJID);
         connection.sendPacket(request);
@@ -177,7 +181,7 @@ public class AgentRoster {
         synchronized (entries) {
             for (Iterator<String> i = entries.iterator(); i.hasNext();) {
                 String entry = i.next();
-                if (entry.toLowerCase().equals(jid.toLowerCase())) {
+                if (entry.toLowerCase(Locale.US).equals(jid.toLowerCase())) {
                     return true;
                 }
             }
@@ -245,7 +249,7 @@ public class AgentRoster {
     private String getPresenceMapKey(String user) {
         String key = user;
         if (!contains(user)) {
-            key = StringUtils.parseBareAddress(user).toLowerCase();
+            key = StringUtils.parseBareAddress(user).toLowerCase(Locale.US);
         }
         return key;
     }
@@ -319,7 +323,7 @@ public class AgentRoster {
                 synchronized (entries) {
                     for (Iterator<String> i = entries.iterator(); i.hasNext();) {
                         String entry = i.next();
-                        if (entry.toLowerCase().equals(StringUtils.parseBareAddress(key).toLowerCase())) {
+                        if (entry.toLowerCase(Locale.US).equals(StringUtils.parseBareAddress(key).toLowerCase())) {
                             fireEvent(EVENT_PRESENCE_CHANGED, packet);
                         }
                     }
@@ -340,7 +344,7 @@ public class AgentRoster {
                 synchronized (entries) {
                     for (Iterator<String> i = entries.iterator(); i.hasNext();) {
                         String entry = (String)i.next();
-                        if (entry.toLowerCase().equals(StringUtils.parseBareAddress(key).toLowerCase())) {
+                        if (entry.toLowerCase(Locale.US).equals(StringUtils.parseBareAddress(key).toLowerCase())) {
                             fireEvent(EVENT_PRESENCE_CHANGED, packet);
                         }
                     }

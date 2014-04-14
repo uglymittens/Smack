@@ -18,6 +18,8 @@
 package org.jivesoftware.smackx.commands;
 
 import org.jivesoftware.smack.*;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.IQ;
@@ -35,7 +37,6 @@ import org.jivesoftware.smackx.disco.packet.DiscoverItems;
 import org.jivesoftware.smackx.disco.packet.DiscoverInfo.Identity;
 import org.jivesoftware.smackx.xdata.Form;
 
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -48,16 +49,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * An AdHocCommandManager is responsible for keeping the list of available
  * commands offered by a service and for processing commands requests.
  *
- * Pass in a Connection instance to
- * {@link #getAddHocCommandsManager(org.jivesoftware.smack.Connection)} in order to
+ * Pass in a XMPPConnection instance to
+ * {@link #getAddHocCommandsManager(org.jivesoftware.smack.XMPPConnection)} in order to
  * get an instance of this class. 
  * 
  * @author Gabriel Guardincerri
  */
-public class AdHocCommandManager {
-    private static final String DISCO_NAMESPACE = "http://jabber.org/protocol/commands";
-
-    private static final String discoNode = DISCO_NAMESPACE;
+public class AdHocCommandManager extends Manager {
+    public static final String NAMESPACE = "http://jabber.org/protocol/commands";
 
     /**
      * The session time out in seconds.
@@ -65,11 +64,11 @@ public class AdHocCommandManager {
     private static final int SESSION_TIMEOUT = 2 * 60;
 
     /**
-     * Map a Connection with it AdHocCommandManager. This map have a key-value
+     * Map a XMPPConnection with it AdHocCommandManager. This map have a key-value
      * pair for every active connection.
      */
-    private static Map<Connection, AdHocCommandManager> instances =
-            Collections.synchronizedMap(new WeakHashMap<Connection, AdHocCommandManager>());
+    private static Map<XMPPConnection, AdHocCommandManager> instances =
+            Collections.synchronizedMap(new WeakHashMap<XMPPConnection, AdHocCommandManager>());
 
     /**
      * Register the listener for all the connection creations. When a new
@@ -77,8 +76,8 @@ public class AdHocCommandManager {
      * related to that connection.
      */
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 getAddHocCommandsManager(connection);
             }
         });
@@ -91,16 +90,11 @@ public class AdHocCommandManager {
      * @param connection the XMPP connection.
      * @return the AdHocCommandManager associated with the connection.
      */
-    public static synchronized AdHocCommandManager getAddHocCommandsManager(Connection connection) {
+    public static synchronized AdHocCommandManager getAddHocCommandsManager(XMPPConnection connection) {
         AdHocCommandManager ahcm = instances.get(connection);
         if (ahcm == null) ahcm = new AdHocCommandManager(connection);
         return ahcm;
     }
-
-    /**
-     * The Connection that this instances of AdHocCommandManager manages
-     */
-    private final WeakReference<Connection> connection;
 
     /**
      * Map a command node with its AdHocCommandInfo. Note: Key=command node,
@@ -124,8 +118,8 @@ public class AdHocCommandManager {
      */
     private Thread sessionsSweeper;
 
-    private AdHocCommandManager(Connection connection) {
-        this.connection = new WeakReference<Connection>(connection);
+    private AdHocCommandManager(XMPPConnection connection) {
+        super(connection);
         this.serviceDiscoveryManager = ServiceDiscoveryManager.getInstanceFor(connection);
         
         // Register the new instance and associate it with the connection
@@ -136,13 +130,13 @@ public class AdHocCommandManager {
         // This information will be used when another client tries to
         // discover whether this client supports AdHoc-Commands or not.
         ServiceDiscoveryManager.getInstanceFor(connection).addFeature(
-                DISCO_NAMESPACE);
+                NAMESPACE);
 
         // Set the NodeInformationProvider that will provide information about
         // which AdHoc-Commands are registered, whenever a disco request is
         // received
         ServiceDiscoveryManager.getInstanceFor(connection)
-                .setNodeInformationProvider(discoNode,
+                .setNodeInformationProvider(NAMESPACE,
                         new NodeInformationProvider() {
                             public List<DiscoverItems.Item> getNodeItems() {
 
@@ -179,7 +173,12 @@ public class AdHocCommandManager {
         PacketListener listener = new PacketListener() {
             public void processPacket(Packet packet) {
                 AdHocCommandData requestData = (AdHocCommandData) packet;
-                processAdHocCommand(requestData);
+                try {
+                    processAdHocCommand(requestData);
+                }
+                catch (SmackException e) {
+                    return;
+                }
             }
         };
 
@@ -221,7 +220,7 @@ public class AdHocCommandManager {
      * @param factory a factory to create new instances of the command.
      */
     public void registerCommand(String node, final String name, LocalCommandFactory factory) {
-        AdHocCommandInfo commandInfo = new AdHocCommandInfo(node, name, connection.get().getUser(), factory);
+        AdHocCommandInfo commandInfo = new AdHocCommandInfo(node, name, connection().getUser(), factory);
 
         commands.put(node, commandInfo);
         // Set the NodeInformationProvider that will provide information about
@@ -234,7 +233,7 @@ public class AdHocCommandManager {
 
                     public List<String> getNodeFeatures() {
                         List<String> answer = new ArrayList<String>();
-                        answer.add(DISCO_NAMESPACE);
+                        answer.add(NAMESPACE);
                         // TODO: check if this service is provided by the
                         // TODO: current connection.
                         answer.add("jabber:x:data");
@@ -264,9 +263,10 @@ public class AdHocCommandManager {
      * @param jid the full JID to retrieve the commands for.
      * @return the discovered items.
      * @throws XMPPException if the operation failed for some reason.
+     * @throws SmackException if there was no response from the server.
      */
-    public DiscoverItems discoverCommands(String jid) throws XMPPException {
-        return serviceDiscoveryManager.discoverItems(jid, discoNode);
+    public DiscoverItems discoverCommands(String jid) throws XMPPException, SmackException {
+        return serviceDiscoveryManager.discoverItems(jid, NAMESPACE);
     }
 
     /**
@@ -274,8 +274,9 @@ public class AdHocCommandManager {
      *
      * @param jid the full JID to publish the commands to.
      * @throws XMPPException if the operation failed for some reason.
+     * @throws SmackException if there was no response from the server.
      */
-    public void publishCommands(String jid) throws XMPPException {
+    public void publishCommands(String jid) throws XMPPException, SmackException {
         // Collects the commands to publish as items
         DiscoverItems discoverItems = new DiscoverItems();
         Collection<AdHocCommandInfo> xCommandsList = getRegisteredCommands();
@@ -287,7 +288,7 @@ public class AdHocCommandManager {
             discoverItems.addItem(item);
         }
 
-        serviceDiscoveryManager.publishItems(jid, discoNode, discoverItems);
+        serviceDiscoveryManager.publishItems(jid, NAMESPACE, discoverItems);
     }
 
     /**
@@ -301,7 +302,7 @@ public class AdHocCommandManager {
      * @return a local instance equivalent to the remote command.
      */
     public RemoteCommand getRemoteCommand(String jid, String node) {
-        return new RemoteCommand(connection.get(), node, jid);
+        return new RemoteCommand(connection(), node, jid);
     }
 
     /**
@@ -327,8 +328,9 @@ public class AdHocCommandManager {
      *
      * @param requestData
      *            the packet to process.
+     * @throws SmackException if there was no response from the server.
      */
-    private void processAdHocCommand(AdHocCommandData requestData) {
+    private void processAdHocCommand(AdHocCommandData requestData) throws SmackException {
         // Only process requests of type SET
         if (requestData.getType() != IQ.Type.SET) {
             return;
@@ -449,10 +451,10 @@ public class AdHocCommandManager {
                 }
 
                 // Sends the response packet
-                connection.get().sendPacket(response);
+                connection().sendPacket(response);
 
             }
-            catch (XMPPException e) {
+            catch (XMPPErrorException e) {
                 // If there is an exception caused by the next, complete,
                 // prev or cancel method, then that error is returned to the
                 // requester.
@@ -564,9 +566,9 @@ public class AdHocCommandManager {
                         executingCommands.remove(sessionId);
                     }
 
-                    connection.get().sendPacket(response);
+                    connection().sendPacket(response);
                 }
-                catch (XMPPException e) {
+                catch (XMPPErrorException e) {
                     // If there is an exception caused by the next, complete,
                     // prev or cancel method, then that error is returned to the
                     // requester.
@@ -590,9 +592,10 @@ public class AdHocCommandManager {
      * 
      * @param response the response to send.
      * @param condition the condition of the error.
+     * @throws NotConnectedException 
      */
     private void respondError(AdHocCommandData response,
-            XMPPError.Condition condition) {
+            XMPPError.Condition condition) throws NotConnectedException {
         respondError(response, new XMPPError(condition));
     }
 
@@ -602,9 +605,10 @@ public class AdHocCommandManager {
      * @param response the response to send.
      * @param condition the condition of the error.
      * @param specificCondition the adhoc command error condition.
+     * @throws NotConnectedException 
      */
     private void respondError(AdHocCommandData response, XMPPError.Condition condition,
-            AdHocCommand.SpecificErrorCondition specificCondition)
+            AdHocCommand.SpecificErrorCondition specificCondition) throws NotConnectedException
     {
         XMPPError error = new XMPPError(condition);
         error.addExtension(new AdHocCommandData.SpecificError(specificCondition));
@@ -616,11 +620,12 @@ public class AdHocCommandManager {
      * 
      * @param response the response to send.
      * @param error the error to send.
+     * @throws NotConnectedException 
      */
-    private void respondError(AdHocCommandData response, XMPPError error) {
+    private void respondError(AdHocCommandData response, XMPPError error) throws NotConnectedException {
         response.setType(IQ.Type.ERROR);
         response.setError(error);
-        connection.get().sendPacket(response);
+        connection().sendPacket(response);
     }
 
     /**
@@ -629,10 +634,9 @@ public class AdHocCommandManager {
      * @param commandNode the command node that identifies it.
      * @param sessionID the session id of this execution.
      * @return the command instance to execute.
-     * @throws XMPPException if there is problem creating the new instance.
+     * @throws XMPPErrorException if there is problem creating the new instance.
      */
-    private LocalCommand newInstanceOfCmd(String commandNode, String sessionID)
-            throws XMPPException
+    private LocalCommand newInstanceOfCmd(String commandNode, String sessionID) throws XMPPErrorException
     {
         AdHocCommandInfo commandInfo = commands.get(commandNode);
         LocalCommand command;
@@ -643,12 +647,12 @@ public class AdHocCommandManager {
             command.setNode(commandInfo.getNode());
         }
         catch (InstantiationException e) {
-            throw new XMPPException(new XMPPError(
-                    XMPPError.Condition.interna_server_error));
+            throw new XMPPErrorException(new XMPPError(
+                    XMPPError.Condition.internal_server_error));
         }
         catch (IllegalAccessException e) {
-            throw new XMPPException(new XMPPError(
-                    XMPPError.Condition.interna_server_error));
+            throw new XMPPErrorException(new XMPPError(
+                    XMPPError.Condition.internal_server_error));
         }
         return command;
     }

@@ -27,16 +27,18 @@ import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.util.StringUtils;
+import org.jivesoftware.smackx.vcardtemp.VCardManager;
 
 /**
  * A VCard class for use with the
@@ -508,15 +510,17 @@ public class VCard extends IQ {
     }
 
     /**
-     * Save this vCard for the user connected by 'connection'. Connection should be authenticated
+     * Save this vCard for the user connected by 'connection'. XMPPConnection should be authenticated
      * and not anonymous.<p>
      * <p/>
      * NOTE: the method is asynchronous and does not wait for the returned value.
      *
-     * @param connection the Connection to use.
-     * @throws XMPPException thrown if there was an issue setting the VCard in the server.
+     * @param connection the XMPPConnection to use.
+     * @throws XMPPErrorException thrown if there was an issue setting the VCard in the server.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void save(Connection connection) throws XMPPException {
+    public void save(XMPPConnection connection) throws NoResponseException, XMPPErrorException, NotConnectedException {
         checkAuthenticated(connection, true);
 
         setType(IQ.Type.SET);
@@ -525,10 +529,13 @@ public class VCard extends IQ {
     }
 
     /**
-     * Load VCard information for a connected user. Connection should be authenticated
+     * Load VCard information for a connected user. XMPPConnection should be authenticated
      * and not anonymous.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public void load(Connection connection) throws XMPPException {
+    public void load(XMPPConnection connection) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         checkAuthenticated(connection, true);
 
         setFrom(connection.getUser());
@@ -536,16 +543,19 @@ public class VCard extends IQ {
     }
 
     /**
-     * Load VCard information for a given user. Connection should be authenticated and not anonymous.
+     * Load VCard information for a given user. XMPPConnection should be authenticated and not anonymous.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void load(Connection connection, String user) throws XMPPException {
+    public void load(XMPPConnection connection, String user) throws NoResponseException, XMPPErrorException, NotConnectedException {
         checkAuthenticated(connection, false);
 
         setTo(user);
         doLoad(connection, user);
     }
 
-    private void doLoad(Connection connection, String user) throws XMPPException {
+    private void doLoad(XMPPConnection connection, String user) throws NoResponseException, XMPPErrorException, NotConnectedException {
         setType(Type.GET);
         VCard result = (VCard) connection.createPacketCollectorAndSend(this).nextResultOrThrow();
         copyFieldsFrom(result);
@@ -573,15 +583,15 @@ public class VCard extends IQ {
         }
     }
 
-    private void checkAuthenticated(Connection connection, boolean checkForAnonymous) {
+    private void checkAuthenticated(XMPPConnection connection, boolean checkForAnonymous) {
         if (connection == null) {
             throw new IllegalArgumentException("No connection was provided");
         }
         if (!connection.isAuthenticated()) {
-            throw new IllegalArgumentException("Connection is not authenticated");
+            throw new IllegalArgumentException("XMPPConnection is not authenticated");
         }
         if (checkForAnonymous && connection.isAnonymous()) {
-            throw new IllegalArgumentException("Connection cannot be anonymous");
+            throw new IllegalArgumentException("XMPPConnection cannot be anonymous");
         }
     }
 
@@ -692,7 +702,7 @@ public class VCard extends IQ {
         }
 
         public void write() {
-            appendTag("vCard", "xmlns", "vcard-temp", hasContent(), new ContentBuilder() {
+            appendTag(VCardManager.ELEMENT, "xmlns", VCardManager.NAMESPACE, hasContent(), new ContentBuilder() {
                 public void addTagContent() {
                     buildActualContent();
                 }
@@ -743,9 +753,7 @@ public class VCard extends IQ {
         }
 
         private void appendPhones(Map<String, String> phones, final String code) {
-            Iterator<Map.Entry<String, String>> it = phones.entrySet().iterator();
-            while (it.hasNext()) {
-                final Map.Entry<String,String> entry = it.next();
+            for (final Map.Entry<String,String> entry : phones.entrySet()) {
                 appendTag("TEL", true, new ContentBuilder() {
                     public void addTagContent() {
                         appendEmptyTag(entry.getKey());
@@ -762,9 +770,7 @@ public class VCard extends IQ {
                     public void addTagContent() {
                         appendEmptyTag(code);
 
-                        Iterator<Map.Entry<String, String>> it = addr.entrySet().iterator();
-                        while (it.hasNext()) {
-                            final Entry<String, String> entry = it.next();
+                        for (final Entry<String, String> entry : addr.entrySet()) {
                             appendTag(entry.getKey(), StringUtils.escapeForXML(entry.getValue()));
                         }
                     }
@@ -777,16 +783,12 @@ public class VCard extends IQ {
         }
 
         private void appendGenericFields() {
-            Iterator<Map.Entry<String, String>> it = otherSimpleFields.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<String, String> entry = it.next();
+            for (Map.Entry<String, String> entry : otherSimpleFields.entrySet()) {
                 appendTag(entry.getKey().toString(),
                         StringUtils.escapeForXML(entry.getValue()));
             }
 
-            it = otherUnescapableFields.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<String, String> entry = it.next();
+            for (Map.Entry<String, String> entry : otherUnescapableFields.entrySet()) {
                 appendTag(entry.getKey().toString(),entry.getValue());
             }
         }
@@ -833,11 +835,11 @@ public class VCard extends IQ {
             appendTag(tag, null, null, hasContent, builder);
         }
 
-        private void appendTag(String tag, final String tagText) {
+        private void appendTag(String tag, final CharSequence tagText) {
             if (tagText == null) return;
             final ContentBuilder contentBuilder = new ContentBuilder() {
                 public void addTagContent() {
-                    sb.append(tagText.trim());
+                    sb.append(tagText.toString().trim());
                 }
             };
             appendTag(tag, true, contentBuilder);

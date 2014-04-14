@@ -16,8 +16,11 @@
  */
 package org.jivesoftware.smackx.search;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
 import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
 import org.jivesoftware.smackx.disco.packet.DiscoverItems;
@@ -25,7 +28,6 @@ import org.jivesoftware.smackx.xdata.Form;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -34,7 +36,7 @@ import java.util.List;
  * searching (DataForms or No DataForms), but allows the user to simply use the DataForm model for both
  * types of support.
  * <pre>
- * Connection con = new XMPPConnection("jabber.org");
+ * XMPPConnection con = new XMPPTCPConnection("jabber.org");
  * con.login("john", "doe");
  * UserSearchManager search = new UserSearchManager(con, "users.jabber.org");
  * Form searchForm = search.getSearchForm();
@@ -48,15 +50,15 @@ import java.util.List;
  */
 public class UserSearchManager {
 
-    private Connection con;
+    private XMPPConnection con;
     private UserSearch userSearch;
 
     /**
      * Creates a new UserSearchManager.
      *
-     * @param con the Connection to use.
+     * @param con the XMPPConnection to use.
      */
-    public UserSearchManager(Connection con) {
+    public UserSearchManager(XMPPConnection con) {
         this.con = con;
         userSearch = new UserSearch();
     }
@@ -66,9 +68,11 @@ public class UserSearchManager {
      *
      * @param searchService the search service to query.
      * @return the form to fill out to perform a search.
-     * @throws XMPPException thrown if a server error has occurred.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public Form getSearchForm(String searchService) throws XMPPException {
+    public Form getSearchForm(String searchService) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         return userSearch.getSearchForm(con, searchService);
     }
 
@@ -79,9 +83,11 @@ public class UserSearchManager {
      * @param searchForm    the <code>Form</code> to submit for searching.
      * @param searchService the name of the search service to use.
      * @return the ReportedData returned by the server.
-     * @throws XMPPException thrown if a server error has occurred.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public ReportedData getSearchResults(Form searchForm, String searchService) throws XMPPException {
+    public ReportedData getSearchResults(Form searchForm, String searchService) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         return userSearch.sendSearchForm(con, searchForm, searchService);
     }
 
@@ -90,15 +96,15 @@ public class UserSearchManager {
      * Returns a collection of search services found on the server.
      *
      * @return a Collection of search services found on the server.
-     * @throws XMPPException thrown if a server error has occurred.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public Collection<String> getSearchServices() throws XMPPException {
+    public Collection<String> getSearchServices() throws NoResponseException, XMPPErrorException, NotConnectedException  {
         final List<String> searchServices = new ArrayList<String>();
         ServiceDiscoveryManager discoManager = ServiceDiscoveryManager.getInstanceFor(con);
         DiscoverItems items = discoManager.discoverItems(con.getServiceName());
-        Iterator<DiscoverItems.Item> iter = items.getItems();
-        while (iter.hasNext()) {
-            DiscoverItems.Item item = iter.next();
+        for (DiscoverItems.Item item : items.getItems()) {
             try {
                 DiscoverInfo info;
                 try {

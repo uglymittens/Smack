@@ -16,7 +16,9 @@
  */
 package org.jivesoftware.smackx.jingle.nat;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.jingle.JingleSession;
 import org.jivesoftware.smackx.jingle.listeners.CreatedJingleSessionListener;
@@ -27,17 +29,17 @@ public class ICETransportManager extends JingleTransportManager implements Jingl
 
     ICEResolver iceResolver = null;
 
-    public ICETransportManager(Connection xmppConnection, String server, int port) {
+    public ICETransportManager(XMPPConnection xmppConnection, String server, int port) {
         iceResolver = new ICEResolver(xmppConnection, server, port);
         try {
             iceResolver.initializeAndWait();
         }
-        catch (XMPPException e) {
+        catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    protected TransportResolver createResolver(JingleSession session) {
+    protected TransportResolver createResolver(JingleSession session) throws SmackException {
         try {
             iceResolver.resolve(session);
         }
@@ -49,7 +51,7 @@ public class ICETransportManager extends JingleTransportManager implements Jingl
 
     // Implement a Session Listener to relay candidates after establishment
 
-    public void sessionEstablished(PayloadType pt, TransportCandidate rc, TransportCandidate lc, JingleSession jingleSession) {
+    public void sessionEstablished(PayloadType pt, TransportCandidate rc, TransportCandidate lc, JingleSession jingleSession) throws NotConnectedException {
         if (lc instanceof ICECandidate) {
             if (((ICECandidate) lc).getType().equals("relay")) {
                 RTPBridge rtpBridge = RTPBridge.relaySession(lc.getConnection(), lc.getSessionId(), lc.getPassword(), rc, lc);

@@ -23,7 +23,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.ConnectionConfiguration;
 import org.jivesoftware.smack.ConnectionCreationListener;
 import org.jivesoftware.smack.ConnectionListener;
@@ -34,7 +35,7 @@ import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.Presence;
 
 /**
- * A dummy implementation of {@link Connection}, intended to be used during
+ * A dummy implementation of {@link XMPPConnection}, intended to be used during
  * unit tests.
  * 
  * Instances store any packets that are delivered to be send using the
@@ -46,10 +47,10 @@ import org.jivesoftware.smack.packet.Presence;
  * can be delivered using the {@linkplain #processPacket(Packet)} method.
  * It invokes the registered packet interceptors and listeners.
  * 
- * @see Connection
+ * @see XMPPConnection
  * @author Guenther Niess
  */
-public class DummyConnection extends Connection {
+public class DummyConnection extends XMPPConnection {
 
     private boolean authenticated = false;
     private boolean anonymous = false;
@@ -74,7 +75,7 @@ public class DummyConnection extends Connection {
     }
 
     @Override
-    public void connect() throws XMPPException {
+    public void connect() {
         connectionID = "dummy-" + new Random(new Date().getTime()).nextInt();
 
         if (reconnect) {
@@ -185,19 +186,11 @@ public class DummyConnection extends Connection {
     }
 
     @Override
-    public void sendPacket(Packet packet) {
-        if (!isConnected()) {
-            throw new IllegalStateException("Not connected to server.");
-        }
-        if (packet == null) {
-            throw new NullPointerException("Packet is null.");
-        }
-        firePacketInterceptors(packet);
-        if (DEBUG_ENABLED) {
+    void sendPacketInternal(Packet packet) {
+        if (SmackConfiguration.DEBUG_ENABLED) {
             System.out.println("[SEND]: " + packet.toXML());
         }
         queue.add(packet);
-        firePacketSendingListeners(packet);
     }
 
     /**
@@ -251,13 +244,18 @@ public class DummyConnection extends Connection {
             collector.processPacket(packet);
         }
 
-        if (DEBUG_ENABLED) {
+        if (SmackConfiguration.DEBUG_ENABLED) {
             System.out.println("[RECV]: " + packet.toXML());
         }
 
         // Deliver the incoming packet to listeners.
         for (ListenerWrapper listenerWrapper : recvListeners.values()) {
-            listenerWrapper.notifyListener(packet);
+            try {
+                listenerWrapper.notifyListener(packet);
+            }
+            catch (NotConnectedException e) {
+                e.printStackTrace();
+            }
         }
     }
 }

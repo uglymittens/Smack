@@ -14,17 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smackx.disco.packet;
 
 import org.jivesoftware.smack.packet.IQ;
-import org.jivesoftware.smack.util.StringUtils;
+import org.jivesoftware.smack.util.XmlStringBuilder;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * A DiscoverItems IQ packet, which is used by XMPP clients to request and receive items 
@@ -39,7 +37,7 @@ public class DiscoverItems extends IQ {
 
     public static final String NAMESPACE = "http://jabber.org/protocol/disco#items";
 
-    private final List<Item> items = new CopyOnWriteArrayList<Item>();
+    private final List<Item> items = new LinkedList<Item>();
     private String node;
 
     /**
@@ -48,9 +46,7 @@ public class DiscoverItems extends IQ {
      * @param item the discovered entity's item
      */
     public void addItem(Item item) {
-        synchronized (items) {
-            items.add(item);
-        }
+        items.add(item);
     }
 
     /**
@@ -65,15 +61,14 @@ public class DiscoverItems extends IQ {
         }
     }
 
+
     /**
      * Returns the discovered items of the queried XMPP entity. 
      *
-     * @return an Iterator on the discovered entity's items
+     * @return an unmodifiable list of the discovered entity's items
      */
-    public Iterator<DiscoverItems.Item> getItems() {
-        synchronized (items) {
-            return Collections.unmodifiableList(items).iterator();
-        }
+    public List<DiscoverItems.Item> getItems() {
+        return Collections.unmodifiableList(items);
     }
 
     /**
@@ -102,22 +97,19 @@ public class DiscoverItems extends IQ {
         this.node = node;
     }
 
-    public String getChildElementXML() {
-        StringBuilder buf = new StringBuilder();
-        buf.append("<query xmlns=\"" + NAMESPACE + "\"");
-        if (getNode() != null) {
-            buf.append(" node=\"");
-            buf.append(StringUtils.escapeForXML(getNode()));
-            buf.append("\"");
+    public XmlStringBuilder getChildElementXML() {
+        XmlStringBuilder xml = new XmlStringBuilder();
+        xml.halfOpenElement("query");
+        xml.xmlnsAttribute(NAMESPACE);
+        xml.optAttribute("node", getNode());
+        xml.rightAngelBracket();
+
+        for (Item item : items) {
+            xml.append(item.toXML());
         }
-        buf.append(">");
-        synchronized (items) {
-            for (Item item : items) {
-                buf.append(item.toXML());
-            }
-        }
-        buf.append("</query>");
-        return buf.toString();
+
+        xml.closeElement("query");
+        return xml;
     }
 
     /**
@@ -231,20 +223,15 @@ public class DiscoverItems extends IQ {
             this.action = action;
         }
 
-        public String toXML() {
-            StringBuilder buf = new StringBuilder();
-            buf.append("<item jid=\"").append(entityID).append("\"");
-            if (name != null) {
-                buf.append(" name=\"").append(StringUtils.escapeForXML(name)).append("\"");
-            }
-            if (node != null) {
-                buf.append(" node=\"").append(StringUtils.escapeForXML(node)).append("\"");
-            }
-            if (action != null) {
-                buf.append(" action=\"").append(StringUtils.escapeForXML(action)).append("\"");
-            }
-            buf.append("/>");
-            return buf.toString();
+        public XmlStringBuilder toXML() {
+            XmlStringBuilder xml = new XmlStringBuilder();
+            xml.halfOpenElement("item");
+            xml.attribute("jid", entityID);
+            xml.optAttribute("name", name);
+            xml.optAttribute("node", node);
+            xml.optAttribute("action", action);
+            xml.closeEmptyElement();
+            return xml;
         }
     }
 }

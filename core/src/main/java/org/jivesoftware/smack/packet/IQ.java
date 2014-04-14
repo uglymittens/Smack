@@ -17,7 +17,9 @@
 
 package org.jivesoftware.smack.packet;
 
-import org.jivesoftware.smack.util.StringUtils;
+import java.util.Locale;
+
+import org.jivesoftware.smack.util.XmlStringBuilder;
 
 /**
  * The base IQ (Info/Query) packet. IQ packets are used to get and set information
@@ -71,36 +73,27 @@ public abstract class IQ extends Packet {
         }
     }
 
-    public String toXML() {
-        StringBuilder buf = new StringBuilder();
-        buf.append("<iq ");
-        if (getPacketID() != null) {
-            buf.append("id=\"" + getPacketID() + "\" ");
-        }
-        if (getTo() != null) {
-            buf.append("to=\"").append(StringUtils.escapeForXML(getTo())).append("\" ");
-        }
-        if (getFrom() != null) {
-            buf.append("from=\"").append(StringUtils.escapeForXML(getFrom())).append("\" ");
-        }
+    @Override
+    public CharSequence toXML() {
+        XmlStringBuilder buf = new XmlStringBuilder();
+        buf.halfOpenElement("iq");
+        addCommonAttributes(buf);
         if (type == null) {
-            buf.append("type=\"get\">");
+            buf.attribute("type", "get");
         }
         else {
-            buf.append("type=\"").append(getType()).append("\">");
+            buf.attribute("type", type.toString());
         }
+        buf.rightAngelBracket();
         // Add the query section if there is one.
-        String queryXML = getChildElementXML();
-        if (queryXML != null) {
-            buf.append(queryXML);
-        }
+        buf.optAppend(getChildElementXML());
         // Add the error sub-packet, if there is one.
         XMPPError error = getError();
         if (error != null) {
             buf.append(error.toXML());
         }
-        buf.append("</iq>");
-        return buf.toString();
+        buf.closeElement("iq");
+        return buf;
     }
 
     /**
@@ -111,7 +104,7 @@ public abstract class IQ extends Packet {
      *
      * @return the child element section of the IQ XML.
      */
-    public abstract String getChildElementXML();
+    public abstract CharSequence getChildElementXML();
 
     /**
      * Convenience method to create a new empty {@link Type#RESULT IQ.Type.RESULT}
@@ -124,7 +117,7 @@ public abstract class IQ extends Packet {
      *      <li>No child element of the IQ element.
      * </ul>
      *
-     * @param iq the {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET} IQ packet.
+     * @param request the {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET} IQ packet.
      * @throws IllegalArgumentException if the IQ packet does not have a type of
      *      {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET}.
      * @return a new {@link Type#RESULT IQ.Type.RESULT} IQ based on the originating IQ.
@@ -158,7 +151,7 @@ public abstract class IQ extends Packet {
      *      <li>The provided {@link XMPPError XMPPError}.
      * </ul>
      *
-     * @param iq the {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET} IQ packet.
+     * @param request the {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET} IQ packet.
      * @param error the error to associate with the created IQ packet.
      * @throws IllegalArgumentException if the IQ packet does not have a type of
      *      {@link Type#GET IQ.Type.GET} or {@link Type#SET IQ.Type.SET}.
@@ -170,7 +163,8 @@ public abstract class IQ extends Packet {
                     "IQ must be of type 'set' or 'get'. Original IQ: " + request.toXML());
         }
         final IQ result = new IQ() {
-            public String getChildElementXML() {
+            @Override
+            public CharSequence getChildElementXML() {
                 return request.getChildElementXML();
             }
         };
@@ -210,7 +204,7 @@ public abstract class IQ extends Packet {
             if (type == null) {
                 return null;
             }
-            type = type.toLowerCase();
+            type = type.toLowerCase(Locale.US);
             if (GET.toString().equals(type)) {
                 return GET;
             }

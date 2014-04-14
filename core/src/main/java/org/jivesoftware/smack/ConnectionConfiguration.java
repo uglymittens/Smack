@@ -17,6 +17,7 @@
 
 package org.jivesoftware.smack;
 
+import org.jivesoftware.smack.packet.Session;
 import org.jivesoftware.smack.proxy.ProxyInfo;
 import org.jivesoftware.smack.util.DNSUtil;
 import org.jivesoftware.smack.util.dns.HostAddress;
@@ -47,8 +48,6 @@ public class ConnectionConfiguration implements Cloneable {
      */
     private String serviceName;
 
-    private String host;
-    private int port;
     protected List<HostAddress> hostAddresses;
 
     private String keystorePath;
@@ -58,13 +57,12 @@ public class ConnectionConfiguration implements Cloneable {
 
     private boolean compressionEnabled = false;
 
-    private boolean saslAuthenticationEnabled = true;
     /**
      * Used to get information from the user
      */
     private CallbackHandler callbackHandler;
 
-    private boolean debuggerEnabled = Connection.DEBUG_ENABLED;
+    private boolean debuggerEnabled = SmackConfiguration.DEBUG_ENABLED;
 
     // Flag that indicates if a reconnection should be attempted when abruptly disconnected
     private boolean reconnectionAllowed = true;
@@ -78,6 +76,8 @@ public class ConnectionConfiguration implements Cloneable {
     private String resource;
     private boolean sendPresence = true;
     private boolean rosterLoadedAtLogin = true;
+    private boolean legacySessionDisabled = false;
+    private boolean useDnsSrvRr = true;
     private SecurityMode securityMode = SecurityMode.enabled;
 
     /**
@@ -89,13 +89,6 @@ public class ConnectionConfiguration implements Cloneable {
     protected ProxyInfo proxy;
 
     /**
-     * Constructor used for subclassing ConnectionConfiguration
-     */
-    ConnectionConfiguration() {
-      /* Does nothing */
-    }
-
-    /**
      * Creates a new ConnectionConfiguration for the specified service name.
      * A DNS SRV lookup will be performed to find out the actual host address
      * and port to use for the connection.
@@ -103,8 +96,6 @@ public class ConnectionConfiguration implements Cloneable {
      * @param serviceName the name of the service provided by an XMPP server.
      */
     public ConnectionConfiguration(String serviceName) {
-        // Perform DNS lookup to get host and port to use
-        hostAddresses = DNSUtil.resolveXMPPDomain(serviceName);
         init(serviceName, ProxyInfo.forDefaultProxy());
     }
 
@@ -118,8 +109,6 @@ public class ConnectionConfiguration implements Cloneable {
      * @param proxy the proxy through which XMPP is to be connected
      */
     public ConnectionConfiguration(String serviceName,ProxyInfo proxy) {
-        // Perform DNS lookup to get host and port to use
-        hostAddresses = DNSUtil.resolveXMPPDomain(serviceName);
         init(serviceName, proxy);
     }
 
@@ -204,7 +193,7 @@ public class ConnectionConfiguration implements Cloneable {
      *
      * @param serviceName the XMPP domain of the target server.
      */
-    public void setServiceName(String serviceName) {
+    void setServiceName(String serviceName) {
         this.serviceName = serviceName;
     }
 
@@ -215,32 +204,6 @@ public class ConnectionConfiguration implements Cloneable {
      */
     public String getServiceName() {
         return serviceName;
-    }
-
-    /**
-     * Returns the host to use when establishing the connection. The host and port to use
-     * might have been resolved by a DNS lookup as specified by the XMPP spec (and therefore
-     * may not match the {@link #getServiceName service name}.
-     *
-     * @return the host to use when establishing the connection.
-     */
-    public String getHost() {
-        return host;
-    }
-
-    /**
-     * Returns the port to use when establishing the connection. The host and port to use
-     * might have been resolved by a DNS lookup as specified by the XMPP spec.
-     *
-     * @return the port to use when establishing the connection.
-     */
-    public int getPort() {
-        return port;
-    }
-
-    public void setUsedHostAddress(HostAddress hostAddress) {
-        this.host = hostAddress.getFQDN();
-        this.port = hostAddress.getPort();
     }
 
     /**
@@ -368,32 +331,8 @@ public class ConnectionConfiguration implements Cloneable {
     }
 
     /**
-     * Returns true if the client is going to use SASL authentication when logging into the
-     * server. If SASL authenticatin fails then the client will try to use non-sasl authentication.
-     * By default SASL is enabled.
-     *
-     * @return true if the client is going to use SASL authentication when logging into the
-     *         server.
-     */
-    public boolean isSASLAuthenticationEnabled() {
-        return saslAuthenticationEnabled;
-    }
-
-    /**
-     * Sets whether the client will use SASL authentication when logging into the
-     * server. If SASL authenticatin fails then the client will try to use non-sasl authentication.
-     * By default, SASL is enabled.
-     *
-     * @param saslAuthenticationEnabled if the client is going to use SASL authentication when
-     *        logging into the server.
-     */
-    public void setSASLAuthenticationEnabled(boolean saslAuthenticationEnabled) {
-        this.saslAuthenticationEnabled = saslAuthenticationEnabled;
-    }
-
-    /**
      * Returns true if the new connection about to be establish is going to be debugged. By
-     * default the value of {@link Connection#DEBUG_ENABLED} is used.
+     * default the value of {@link SmackConfiguration#DEBUG_ENABLED} is used.
      *
      * @return true if the new connection about to be establish is going to be debugged.
      */
@@ -403,7 +342,7 @@ public class ConnectionConfiguration implements Cloneable {
 
     /**
      * Sets if the new connection about to be establish is going to be debugged. By
-     * default the value of {@link Connection#DEBUG_ENABLED} is used.
+     * default the value of {@link SmackConfiguration#DEBUG_ENABLED} is used.
      *
      * @param debuggerEnabled if the new connection about to be establish is going to be debugged.
      */
@@ -472,6 +411,28 @@ public class ConnectionConfiguration implements Cloneable {
      */
     public void setRosterLoadedAtLogin(boolean rosterLoadedAtLogin) {
         this.rosterLoadedAtLogin = rosterLoadedAtLogin;
+    }
+
+    /**
+     * Returns true if a {@link Session} will be requested on login if the server
+     * supports it. Although this was mandatory on RFC 3921, RFC 6120/6121 don't
+     * even mention this part of the protocol.
+     *
+     * @return true if a session has to be requested when logging in.
+     */
+    public boolean isLegacySessionDisabled() {
+        return legacySessionDisabled;
+    }
+
+    /**
+     * Sets if a {@link Session} will be requested on login if the server supports
+     * it. Although this was mandatory on RFC 3921, RFC 6120/6121 don't even
+     * mention this part of the protocol.
+     *
+     * @param legacySessionDisabled if a session has to be requested when logging in.
+     */
+    public void setLegacySessionDisabled(boolean legacySessionDisabled) {
+        this.legacySessionDisabled = legacySessionDisabled;
     }
 
     /**
@@ -561,7 +522,7 @@ public class ConnectionConfiguration implements Cloneable {
      *
      * @return the username to use when trying to reconnect to the server.
      */
-    String getUsername() {
+    public String getUsername() {
         return this.username;
     }
 
@@ -570,7 +531,7 @@ public class ConnectionConfiguration implements Cloneable {
      *
      * @return the password to use when trying to reconnect to the server.
      */
-    String getPassword() {
+    public String getPassword() {
         return this.password;
     }
 
@@ -579,7 +540,7 @@ public class ConnectionConfiguration implements Cloneable {
      *
      * @return the resource to use when trying to reconnect to the server.
      */
-    String getResource() {
+    public String getResource() {
         return resource;
     }
 
@@ -588,7 +549,7 @@ public class ConnectionConfiguration implements Cloneable {
      *
      * @return true if an available presence should be sent when logging in while reconnecting
      */
-    boolean isSendPresence() {
+    public boolean isSendPresence() {
         return sendPresence;
     }
 
@@ -598,14 +559,16 @@ public class ConnectionConfiguration implements Cloneable {
         this.resource = resource;
     }
 
+    void maybeResolveDns() throws Exception {
+        if (!useDnsSrvRr) return;
+        hostAddresses = DNSUtil.resolveXMPPDomain(serviceName);
+    }
+
     private void initHostAddresses(String host, int port) {
         hostAddresses = new ArrayList<HostAddress>(1);
         HostAddress hostAddress;
-        try {
-             hostAddress = new HostAddress(host, port);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        hostAddress = new HostAddress(host, port);
         hostAddresses.add(hostAddress);
+        useDnsSrvRr = false;
     }
 }

@@ -26,9 +26,10 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smackx.jingle.JingleSession;
 import org.jivesoftware.smackx.jingle.nat.TransportResolverListener.Checker;
 
@@ -59,7 +60,7 @@ public abstract class TransportCandidate {
 
     private String sessionId;
 
-    private Connection connection;
+    private XMPPConnection connection;
 
     private TransportCandidate symmetric;
 
@@ -103,7 +104,7 @@ public abstract class TransportCandidate {
     /**
      * Get local IP to bind to this candidate
      *
-     * @return
+     * @return the local IP
      */
     public String getLocalIp() {
         return localIp == null ? ip : localIp;
@@ -119,9 +120,9 @@ public abstract class TransportCandidate {
     }
 
     /**
-     * Get the symetric candidate for this candidate if it exists.
+     * Get the symmetric candidate for this candidate if it exists.
      *
-     * @return
+     * @return the symmetric candidate
      */
     public TransportCandidate getSymmetric() {
         return symmetric;
@@ -155,27 +156,27 @@ public abstract class TransportCandidate {
     }
 
     /**
-     * Get the Connection use to send or receive this candidate
+     * Get the XMPPConnection use to send or receive this candidate
      *
-     * @return
+     * @return the connection
      */
-    public Connection getConnection() {
+    public XMPPConnection getConnection() {
         return connection;
     }
 
     /**
-     * Set the Connection use to send or receive this candidate
+     * Set the XMPPConnection use to send or receive this candidate
      *
      * @param connection
      */
-    public void setConnection(Connection connection) {
+    public void setConnection(XMPPConnection connection) {
         this.connection = connection;
     }
 
     /**
      * Get the jingle's sessionId that is using this candidate
      *
-     * @return
+     * @return the session ID
      */
     public String getSessionId() {
         return sessionId;
@@ -468,7 +469,7 @@ public abstract class TransportCandidate {
             if (value == null) {
                 return UDP;
             }
-            value = value.toLowerCase();
+            value = value.toLowerCase(Locale.US);
             if (value.equals("udp")) {
                 return UDP;
             } else if (value.equals("tcp")) {
@@ -552,7 +553,7 @@ public abstract class TransportCandidate {
             if (value == null) {
                 return MYRTPVOICE;
             }
-            value = value.toLowerCase();
+            value = value.toLowerCase(Locale.US);
             if (value.equals("myrtpvoice")) {
                 return MYRTPVOICE;
             } else if (value.equals("tcp")) {

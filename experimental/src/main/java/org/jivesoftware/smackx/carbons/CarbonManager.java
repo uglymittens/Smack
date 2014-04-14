@@ -16,22 +16,25 @@
  */
 package org.jivesoftware.smackx.carbons;
 
-import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.ConnectionCreationListener;
+import org.jivesoftware.smack.Manager;
 import org.jivesoftware.smack.PacketListener;
 import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.filter.PacketIDFilter;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
+import org.jivesoftware.smack.filter.IQReplyFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smackx.carbons.packet.CarbonExtension;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
-import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
 
 /**
  * Packet extension for XEP-0280: Message Carbons. This class implements
@@ -43,26 +46,25 @@ import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
  *
  * @author Georg Lukas
  */
-public class CarbonManager {
+public class CarbonManager extends Manager {
 
-    private static Map<Connection, CarbonManager> instances =
-            Collections.synchronizedMap(new WeakHashMap<Connection, CarbonManager>());
+    private static Map<XMPPConnection, CarbonManager> instances =
+            Collections.synchronizedMap(new WeakHashMap<XMPPConnection, CarbonManager>());
 
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 getInstanceFor(connection);
             }
         });
     }
     
-    private WeakReference<Connection> weakRefConnection;
     private volatile boolean enabled_state = false;
 
-    private CarbonManager(Connection connection) {
+    private CarbonManager(XMPPConnection connection) {
+        super(connection);
         ServiceDiscoveryManager sdm = ServiceDiscoveryManager.getInstanceFor(connection);
         sdm.addFeature(CarbonExtension.NAMESPACE);
-        weakRefConnection = new WeakReference<Connection>(connection);
         instances.put(connection, this);
     }
 
@@ -73,7 +75,7 @@ public class CarbonManager {
      *
      * @return a CarbonManager instance
      */
-    public static synchronized CarbonManager getInstanceFor(Connection connection) {
+    public static synchronized CarbonManager getInstanceFor(XMPPConnection connection) {
         CarbonManager carbonManager = instances.get(connection);
 
         if (carbonManager == null) {
@@ -97,17 +99,12 @@ public class CarbonManager {
      * Returns true if XMPP Carbons are supported by the server.
      * 
      * @return true if supported
+     * @throws SmackException if there was no response from the server.
+     * @throws XMPPException 
      */
-    public boolean isSupportedByServer() {
-        Connection connection = weakRefConnection.get();
-        try {
-            DiscoverInfo result = ServiceDiscoveryManager
-                .getInstanceFor(connection).discoverInfo(connection.getServiceName());
-            return result.containsFeature(CarbonExtension.NAMESPACE);
-        }
-        catch (XMPPException e) {
-            return false;
-        }
+    public boolean isSupportedByServer() throws XMPPException, SmackException {
+        return ServiceDiscoveryManager.getInstanceFor(connection()).supportsFeature(
+                        connection().getServiceName(), CarbonExtension.NAMESPACE);
     }
 
     /**
@@ -117,22 +114,22 @@ public class CarbonManager {
      * You should first check for support using isSupportedByServer().
      *
      * @param new_state whether carbons should be enabled or disabled
+     * @throws NotConnectedException 
      */
-    public void sendCarbonsEnabled(final boolean new_state) {
-        final Connection connection = weakRefConnection.get();
+    public void sendCarbonsEnabled(final boolean new_state) throws NotConnectedException {
         IQ setIQ = carbonsEnabledIQ(new_state);
 
-        connection.addPacketListener(new PacketListener() {
+        connection().addPacketListener(new PacketListener() {
             public void processPacket(Packet packet) {
                 IQ result = (IQ)packet;
                 if (result.getType() == IQ.Type.RESULT) {
                     enabled_state = new_state;
                 }
-                connection.removePacketListener(this);
+                connection().removePacketListener(this);
             }
-        }, new PacketIDFilter(setIQ.getPacketID()));
+        }, new IQReplyFilter(setIQ, connection()));
 
-        connection.sendPacket(setIQ);
+        connection().sendPacket(setIQ);
     }
 
     /**
@@ -143,37 +140,39 @@ public class CarbonManager {
      * You should first check for support using isSupportedByServer().
      *
      * @param new_state whether carbons should be enabled or disabled
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      *
-     * @return true if the operation was successful
-     * @throws XMPPException 
      */
-    public void setCarbonsEnabled(final boolean new_state) throws XMPPException {
-        if (enabled_state == new_state) return;
+    public synchronized void setCarbonsEnabled(final boolean new_state) throws NoResponseException,
+                    XMPPErrorException, NotConnectedException {
+        if (enabled_state == new_state)
+            return;
 
-        Connection connection = weakRefConnection.get();
         IQ setIQ = carbonsEnabledIQ(new_state);
 
-        connection.createPacketCollectorAndSend(setIQ).nextResultOrThrow();
+        connection().createPacketCollectorAndSend(setIQ).nextResultOrThrow();
         enabled_state = new_state;
     }
 
     /**
      * Helper method to enable carbons.
      *
-     * @return true if the operation was successful
      * @throws XMPPException 
+     * @throws SmackException if there was no response from the server.
      */
-    public void enableCarbons() throws XMPPException {
+    public void enableCarbons() throws XMPPException, SmackException {
         setCarbonsEnabled(true);
     }
 
     /**
      * Helper method to disable carbons.
      *
-     * @return true if the operation was successful
      * @throws XMPPException 
+     * @throws SmackException if there was no response from the server.
      */
-    public void disableCarbons() throws XMPPException {
+    public void disableCarbons() throws XMPPException, SmackException {
         setCarbonsEnabled(false);
     }
 

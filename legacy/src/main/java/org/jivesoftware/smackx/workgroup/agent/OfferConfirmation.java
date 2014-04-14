@@ -17,7 +17,8 @@
 
 package org.jivesoftware.smackx.workgroup.agent;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.provider.IQProvider;
 import org.xmlpull.v1.XmlPullParser;
@@ -44,7 +45,7 @@ public class OfferConfirmation extends IQ {
     }
 
 
-    public void notifyService(Connection con, String workgroup, String createdRoomName) {
+    public void notifyService(XMPPConnection con, String workgroup, String createdRoomName) throws NotConnectedException {
         NotifyServicePacket packet = new NotifyServicePacket(workgroup, createdRoomName);
         con.sendPacket(packet);
     }

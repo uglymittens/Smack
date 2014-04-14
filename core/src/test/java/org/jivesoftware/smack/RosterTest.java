@@ -39,7 +39,7 @@ import org.xmlpull.v1.XmlPullParserFactory;
 import org.xmlpull.v1.XmlPullParser;
 
 /**
- * Tests that verifies the correct behavior of the {@see Roster} implementation.
+ * Tests that verifies the correct behavior of the {@link Roster} implementation.
  * 
  * @see Roster
  * @see <a href="http://xmpp.org/rfcs/rfc3921.html#roster">Roster Management</a>
@@ -53,7 +53,7 @@ public class RosterTest {
     @Before
     public void setUp() throws Exception {
         // Uncomment this to enable debug output
-        //Connection.DEBUG_ENABLED = true;
+        //XMPPConnection.DEBUG_ENABLED = true;
 
         connection = new DummyConnection();
         connection.connect();
@@ -489,7 +489,7 @@ public class RosterTest {
     }
 
     /**
-     * Remove all roster entries by iterating trough {@see Roster#getEntries()}
+     * Remove all roster entries by iterating trough {@link Roster#getEntries()}
      * and simulating receiving roster pushes from the server.
      * 
      * @param connection the dummy connection of which the provided roster belongs to.
@@ -520,8 +520,9 @@ public class RosterTest {
      * 
      * @param connection the dummy connection of which the provided roster belongs to.
      * @param roster the roster (or buddy list) which should be initialized.
+     * @throws SmackException 
      */
-    public static void initRoster(DummyConnection connection, Roster roster) throws InterruptedException, XMPPException {
+    public static void initRoster(DummyConnection connection, Roster roster) throws InterruptedException, XMPPException, SmackException {
         roster.reload();
         while (true) {
             final Packet sentPacket = connection.getSentPacket();
@@ -702,7 +703,7 @@ public class RosterTest {
 
         public synchronized void entriesAdded(Collection<String> addresses) {
             addressesAdded.addAll(addresses);
-            if (Connection.DEBUG_ENABLED) {
+            if (SmackConfiguration.DEBUG_ENABLED) {
                 for (String address : addresses) {
                     System.out.println("Roster entry for " + address + " added.");
                 }
@@ -711,7 +712,7 @@ public class RosterTest {
 
         public synchronized void entriesDeleted(Collection<String> addresses) {
             addressesDeleted.addAll(addresses);
-            if (Connection.DEBUG_ENABLED) {
+            if (SmackConfiguration.DEBUG_ENABLED) {
                 for (String address : addresses) {
                     System.out.println("Roster entry for " + address + " deleted.");
                 }
@@ -720,7 +721,7 @@ public class RosterTest {
 
         public synchronized void entriesUpdated(Collection<String> addresses) {
             addressesUpdated.addAll(addresses);
-            if (Connection.DEBUG_ENABLED) {
+            if (SmackConfiguration.DEBUG_ENABLED) {
                 for (String address : addresses) {
                     System.out.println("Roster entry for " + address + " updated.");
                 }
@@ -728,7 +729,7 @@ public class RosterTest {
         }
 
         public void presenceChanged(Presence presence) {
-            if (Connection.DEBUG_ENABLED) {
+            if (SmackConfiguration.DEBUG_ENABLED) {
                 System.out.println("Roster presence changed: " + presence.toXML());
             }
         }

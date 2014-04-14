@@ -17,32 +17,32 @@
 
 package org.jivesoftware.smackx.chatstates;
 
-import java.lang.ref.WeakReference;
 import java.util.Map;
 import java.util.WeakHashMap;
 
 import org.jivesoftware.smack.Chat;
+import org.jivesoftware.smack.ChatManager;
 import org.jivesoftware.smack.ChatManagerListener;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.Manager;
 import org.jivesoftware.smack.MessageListener;
 import org.jivesoftware.smack.PacketInterceptor;
-import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.NotFilter;
 import org.jivesoftware.smack.filter.PacketExtensionFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.PacketExtension;
-import org.jivesoftware.smack.util.collections.ReferenceMap;
 import org.jivesoftware.smackx.chatstates.packet.ChatStateExtension;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
 
 /**
- * Handles chat state for all chats on a particular Connection. This class manages both the
- * packet extensions and the disco response neccesary for compliance with
+ * Handles chat state for all chats on a particular XMPPConnection. This class manages both the
+ * packet extensions and the disco response necessary for compliance with
  * <a href="http://www.xmpp.org/extensions/xep-0085.html">XEP-0085</a>.
  *
- * NOTE: {@link org.jivesoftware.smackx.chatstates.ChatStateManager#getInstance(org.jivesoftware.smack.Connection)}
+ * NOTE: {@link org.jivesoftware.smackx.chatstates.ChatStateManager#getInstance(org.jivesoftware.smack.XMPPConnection)}
  * needs to be called in order for the listeners to be registered appropriately with the connection.
  * If this does not occur you will not receive the update notifications.
  *
@@ -50,42 +50,28 @@ import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
  * @see org.jivesoftware.smackx.chatstates.ChatState
  * @see org.jivesoftware.smackx.chatstates.packet.ChatStateExtension
  */
-public class ChatStateManager {
+public class ChatStateManager extends Manager {
+    public static final String NAMESPACE = "http://jabber.org/protocol/chatstates";
 
-    private static final Map<Connection, WeakReference<ChatStateManager>> managers =
-            new WeakHashMap<Connection, WeakReference<ChatStateManager>>();
+    private static final Map<XMPPConnection, ChatStateManager> INSTANCES =
+            new WeakHashMap<XMPPConnection, ChatStateManager>();
 
-    private static final PacketFilter filter = new NotFilter(
-                new PacketExtensionFilter("http://jabber.org/protocol/chatstates"));
+    private static final PacketFilter filter = new NotFilter(new PacketExtensionFilter(NAMESPACE));
 
     /**
-     * Returns the ChatStateManager related to the Connection and it will create one if it does
+     * Returns the ChatStateManager related to the XMPPConnection and it will create one if it does
      * not yet exist.
      *
      * @param connection the connection to return the ChatStateManager
      * @return the ChatStateManager related the the connection.
      */
-    public static ChatStateManager getInstance(final Connection connection) {
-        if(connection == null) {
-            return null;
-        }
-        synchronized (managers) {
-            ChatStateManager manager;
-            WeakReference<ChatStateManager> ref = managers.get(connection);
-            
-            if (ref == null) {
+    public static synchronized ChatStateManager getInstance(final XMPPConnection connection) {
+            ChatStateManager manager = INSTANCES.get(connection);
+            if (manager == null) {
                 manager = new ChatStateManager(connection);
-                manager.init();
-                managers.put(connection, new WeakReference<ChatStateManager>(manager));
             }
-            else
-            	manager = ref.get();
-
             return manager;
-        }
     }
-
-    private final Connection connection;
 
     private final OutgoingMessageInterceptor outgoingInterceptor = new OutgoingMessageInterceptor();
 
@@ -94,21 +80,20 @@ public class ChatStateManager {
     /**
      * Maps chat to last chat state.
      */
-    private final Map<Chat, ChatState> chatStates =
-            new ReferenceMap<Chat, ChatState>(ReferenceMap.WEAK, ReferenceMap.HARD);
+    private final Map<Chat, ChatState> chatStates = new WeakHashMap<Chat, ChatState>();
 
-    private ChatStateManager(Connection connection) {
-        this.connection = connection;
+    private final ChatManager chatManager;
+
+    private ChatStateManager(XMPPConnection connection) {
+        super(connection);
+        chatManager = ChatManager.getInstanceFor(connection);
+        chatManager.addOutgoingMessageInterceptor(outgoingInterceptor, filter);
+        chatManager.addChatListener(incomingInterceptor);
+
+        ServiceDiscoveryManager.getInstanceFor(connection).addFeature(NAMESPACE);
+        INSTANCES.put(connection, this);
     }
 
-    private void init() {
-        connection.getChatManager().addOutgoingMessageInterceptor(outgoingInterceptor,
-                filter);
-        connection.getChatManager().addChatListener(incomingInterceptor);
-
-        ServiceDiscoveryManager.getInstanceFor(connection)
-                .addFeature("http://jabber.org/protocol/chatstates");
-    }
 
     /**
      * Sets the current state of the provided chat. This method will send an empty bodied Message
@@ -117,11 +102,9 @@ public class ChatStateManager {
      *
      * @param newState the new state of the chat
      * @param chat the chat.
-     * @throws org.jivesoftware.smack.XMPPException
-     *          when there is an error sending the message
-     *          packet.
+     * @throws NotConnectedException 
      */
-    public void setCurrentState(ChatState newState, Chat chat) throws XMPPException {
+    public void setCurrentState(ChatState newState, Chat chat) throws NotConnectedException {
         if(chat == null || newState == null) {
             throw new IllegalArgumentException("Arguments cannot be null.");
         }
@@ -142,15 +125,15 @@ public class ChatStateManager {
 
         ChatStateManager that = (ChatStateManager) o;
 
-        return connection.equals(that.connection);
+        return connection().equals(that.connection());
 
     }
 
     public int hashCode() {
-        return connection.hashCode();
+        return connection().hashCode();
     }
 
-    private boolean updateChatState(Chat chat, ChatState newState) {
+    private synchronized boolean updateChatState(Chat chat, ChatState newState) {
         ChatState lastChatState = chatStates.get(chat);
         if (lastChatState != newState) {
             chatStates.put(chat, newState);
@@ -171,7 +154,7 @@ public class ChatStateManager {
 
         public void interceptPacket(Packet packet) {
             Message message = (Message) packet;
-            Chat chat = connection.getChatManager().getThreadChat(message.getThread());
+            Chat chat = chatManager.getThreadChat(message.getThread());
             if (chat == null) {
                 return;
             }
@@ -188,8 +171,7 @@ public class ChatStateManager {
         }
 
         public void processMessage(Chat chat, Message message) {
-            PacketExtension extension
-                    = message.getExtension("http://jabber.org/protocol/chatstates");
+            PacketExtension extension = message.getExtension(NAMESPACE);
             if (extension == null) {
                 return;
             }

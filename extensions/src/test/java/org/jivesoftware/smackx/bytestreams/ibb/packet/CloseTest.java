@@ -16,8 +16,9 @@
  */
 package org.jivesoftware.smackx.bytestreams.ibb.packet;
 
-import static junit.framework.Assert.*;
-import static org.custommonkey.xmlunit.XMLAssert.*;
+import static org.junit.Assert.assertEquals;
+
+import static org.custommonkey.xmlunit.XMLAssert.assertXMLEqual;
 
 import java.util.Properties;
 
@@ -78,7 +79,7 @@ public class CloseTest {
         close.setTo("juliet@capulet.lit/balcony");
         close.setPacketID("us71g45j");
         
-        assertXMLEqual(control, close.toXML());
+        assertXMLEqual(control, close.toXML().toString());
     }
 
 }

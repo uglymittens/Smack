@@ -20,256 +20,22 @@ package org.jivesoftware.smack.util;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.DateFormat;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Date;
-import java.util.List;
 import java.util.Random;
-import java.util.TimeZone;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * A collection of utility methods for String objects.
  */
 public class StringUtils {
     private static final Logger LOGGER = Logger.getLogger(StringUtils.class.getName());
-    
-	/**
-     * Date format as defined in XEP-0082 - XMPP Date and Time Profiles. The time zone is set to
-     * UTC.
-     * <p>
-     * Date formats are not synchronized. Since multiple threads access the format concurrently, it
-     * must be synchronized externally or you can use the convenience methods
-     * {@link #parseXEP0082Date(String)} and {@link #formatXEP0082Date(Date)}.
-     * @deprecated This public version will be removed in favor of using the methods defined within this class.
-     */
-    public static final DateFormat XEP_0082_UTC_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
-    
-    /*
-     * private version to use internally so we don't have to be concerned with thread safety.
-     */
-    private static final DateFormat dateFormatter = DateFormatType.XEP_0082_DATE_PROFILE.createFormatter();
-    private static final Pattern datePattern = Pattern.compile("^\\d+-\\d+-\\d+$");
-    
-    private static final DateFormat timeFormatter = DateFormatType.XEP_0082_TIME_MILLIS_ZONE_PROFILE.createFormatter();
-    private static final Pattern timePattern = Pattern.compile("^(\\d+:){2}\\d+.\\d+(Z|([+-](\\d+:\\d+)))$");
-    private static final DateFormat timeNoZoneFormatter = DateFormatType.XEP_0082_TIME_MILLIS_PROFILE.createFormatter();
-    private static final Pattern timeNoZonePattern = Pattern.compile("^(\\d+:){2}\\d+.\\d+$");
-    
-    private static final DateFormat timeNoMillisFormatter = DateFormatType.XEP_0082_TIME_ZONE_PROFILE.createFormatter();
-    private static final Pattern timeNoMillisPattern = Pattern.compile("^(\\d+:){2}\\d+(Z|([+-](\\d+:\\d+)))$");
-    private static final DateFormat timeNoMillisNoZoneFormatter = DateFormatType.XEP_0082_TIME_PROFILE.createFormatter();
-    private static final Pattern timeNoMillisNoZonePattern = Pattern.compile("^(\\d+:){2}\\d+$");
-    
-    private static final DateFormat dateTimeFormatter = DateFormatType.XEP_0082_DATETIME_MILLIS_PROFILE.createFormatter();
-    private static final Pattern dateTimePattern = Pattern.compile("^\\d+(-\\d+){2}+T(\\d+:){2}\\d+.\\d+(Z|([+-](\\d+:\\d+)))?$");
-    private static final DateFormat dateTimeNoMillisFormatter = DateFormatType.XEP_0082_DATETIME_PROFILE.createFormatter();
-    private static final Pattern dateTimeNoMillisPattern = Pattern.compile("^\\d+(-\\d+){2}+T(\\d+:){2}\\d+(Z|([+-](\\d+:\\d+)))?$");
 
-    private static final DateFormat xep0091Formatter = new SimpleDateFormat("yyyyMMdd'T'HH:mm:ss");
-    private static final DateFormat xep0091Date6DigitFormatter = new SimpleDateFormat("yyyyMd'T'HH:mm:ss");
-    private static final DateFormat xep0091Date7Digit1MonthFormatter = new SimpleDateFormat("yyyyMdd'T'HH:mm:ss");
-    private static final DateFormat xep0091Date7Digit2MonthFormatter = new SimpleDateFormat("yyyyMMd'T'HH:mm:ss");
-    private static final Pattern xep0091Pattern = Pattern.compile("^\\d+T\\d+:\\d+:\\d+$");
-    
-    private static final List<PatternCouplings> couplings = new ArrayList<PatternCouplings>();
-    
-    static {
-    	TimeZone utc = TimeZone.getTimeZone("UTC");
-        XEP_0082_UTC_FORMAT.setTimeZone(utc);
-        dateFormatter.setTimeZone(utc);
-        timeFormatter.setTimeZone(utc);
-        timeNoZoneFormatter.setTimeZone(utc);
-        timeNoMillisFormatter.setTimeZone(utc);
-        timeNoMillisNoZoneFormatter.setTimeZone(utc);
-        dateTimeFormatter.setTimeZone(utc);
-        dateTimeNoMillisFormatter.setTimeZone(utc);
-        
-        xep0091Formatter.setTimeZone(utc);
-        xep0091Date6DigitFormatter.setTimeZone(utc);
-        xep0091Date7Digit1MonthFormatter.setTimeZone(utc);
-        xep0091Date7Digit1MonthFormatter.setLenient(false);
-        xep0091Date7Digit2MonthFormatter.setTimeZone(utc);
-        xep0091Date7Digit2MonthFormatter.setLenient(false);
-        
-        couplings.add(new PatternCouplings(datePattern, dateFormatter));
-        couplings.add(new PatternCouplings(dateTimePattern, dateTimeFormatter, true));
-        couplings.add(new PatternCouplings(dateTimeNoMillisPattern, dateTimeNoMillisFormatter, true));
-        couplings.add(new PatternCouplings(timePattern, timeFormatter, true));
-        couplings.add(new PatternCouplings(timeNoZonePattern, timeNoZoneFormatter));
-        couplings.add(new PatternCouplings(timeNoMillisPattern, timeNoMillisFormatter, true));
-        couplings.add(new PatternCouplings(timeNoMillisNoZonePattern, timeNoMillisNoZoneFormatter));
-    }
+    public static final String QUOTE_ENCODE = "&quot;";
+    public static final String APOS_ENCODE = "&apos;";
+    public static final String AMP_ENCODE = "&amp;";
+    public static final String LT_ENCODE = "&lt;";
+    public static final String GT_ENCODE = "&gt;";
 
-    private static final char[] QUOTE_ENCODE = "&quot;".toCharArray();
-    private static final char[] APOS_ENCODE = "&apos;".toCharArray();
-    private static final char[] AMP_ENCODE = "&amp;".toCharArray();
-    private static final char[] LT_ENCODE = "&lt;".toCharArray();
-    private static final char[] GT_ENCODE = "&gt;".toCharArray();
-
-    /**
-     * Parses the given date string in the <a href="http://xmpp.org/extensions/xep-0082.html">XEP-0082 - XMPP Date and Time Profiles</a>.
-     * 
-     * @param dateString the date string to parse
-     * @return the parsed Date
-     * @throws ParseException if the specified string cannot be parsed
-     * @deprecated Use {@link #parseDate(String)} instead.
-     * 
-     */
-    public static Date parseXEP0082Date(String dateString) throws ParseException {
-    	return parseDate(dateString);
-    }
-    
-    /**
-     * Parses the given date string in either of the three profiles of <a href="http://xmpp.org/extensions/xep-0082.html">XEP-0082 - XMPP Date and Time Profiles</a>
-     * or <a href="http://xmpp.org/extensions/xep-0091.html">XEP-0091 - Legacy Delayed Delivery</a> format.
-     * <p>
-     * This method uses internal date formatters and is thus threadsafe.
-     * @param dateString the date string to parse
-     * @return the parsed Date
-     * @throws ParseException if the specified string cannot be parsed
-     */
-    public static Date parseDate(String dateString) throws ParseException {
-        Matcher matcher = xep0091Pattern.matcher(dateString);
-        
-        /*
-         * if date is in XEP-0091 format handle ambiguous dates missing the
-         * leading zero in month and day
-         */
-        if (matcher.matches()) {
-        	int length = dateString.split("T")[0].length();
-        	
-            if (length < 8) {
-                Date date = handleDateWithMissingLeadingZeros(dateString, length);
-
-                if (date != null)
-                	return date;
-            }
-            else {
-            	synchronized (xep0091Formatter) {
-                	return xep0091Formatter.parse(dateString);
-				}
-            }
-        }
-        else {
-        	for (PatternCouplings coupling : couplings) {
-                matcher = coupling.pattern.matcher(dateString);
-                
-                if (matcher.matches())
-                {
-                	if (coupling.needToConvertTimeZone) {
-                		dateString = coupling.convertTime(dateString);
-                	}
-                		
-                    synchronized (coupling.formatter) {
-                    	return coupling.formatter.parse(dateString);
-                    }
-                }
-			}
-        }
-        
-        /*
-         * We assume it is the XEP-0082 DateTime profile with no milliseconds at this point.  If it isn't, is is just not parseable, then we attempt
-         * to parse it regardless and let it throw the ParseException. 
-         */
-        synchronized (dateTimeNoMillisFormatter) {
-        	return dateTimeNoMillisFormatter.parse(dateString);
-        }
-    }
-    
-    /**
-     * Parses the given date string in different ways and returns the date that
-     * lies in the past and/or is nearest to the current date-time.
-     * 
-     * @param stampString date in string representation
-     * @param dateLength 
-     * @param noFuture 
-     * @return the parsed date
-     * @throws ParseException The date string was of an unknown format
-     */
-    private static Date handleDateWithMissingLeadingZeros(String stampString, int dateLength) throws ParseException {
-        if (dateLength == 6) {
-        	synchronized (xep0091Date6DigitFormatter) {
-				return xep0091Date6DigitFormatter.parse(stampString);
-			}
-        }
-        Calendar now = Calendar.getInstance();
-        
-        Calendar oneDigitMonth = parseXEP91Date(stampString, xep0091Date7Digit1MonthFormatter);
-        Calendar twoDigitMonth = parseXEP91Date(stampString, xep0091Date7Digit2MonthFormatter);
-        
-        List<Calendar> dates = filterDatesBefore(now, oneDigitMonth, twoDigitMonth);
-        
-        if (!dates.isEmpty()) {
-            return determineNearestDate(now, dates).getTime();
-        } 
-        return null;
-    }
-
-    private static Calendar parseXEP91Date(String stampString, DateFormat dateFormat) {
-        try {
-            synchronized (dateFormat) {
-                dateFormat.parse(stampString);
-                return dateFormat.getCalendar();
-            }
-        }
-        catch (ParseException e) {
-            return null;
-        }
-    }
-
-    private static List<Calendar> filterDatesBefore(Calendar now, Calendar... dates) {
-        List<Calendar> result = new ArrayList<Calendar>();
-        
-        for (Calendar calendar : dates) {
-            if (calendar != null && calendar.before(now)) {
-                result.add(calendar);
-            }
-        }
-
-        return result;
-    }
-
-    private static Calendar determineNearestDate(final Calendar now, List<Calendar> dates) {
-        
-        Collections.sort(dates, new Comparator<Calendar>() {
-
-            public int compare(Calendar o1, Calendar o2) {
-                Long diff1 = new Long(now.getTimeInMillis() - o1.getTimeInMillis());
-                Long diff2 = new Long(now.getTimeInMillis() - o2.getTimeInMillis());
-                return diff1.compareTo(diff2);
-            }
-            
-        });
-        
-        return dates.get(0);
-    }
-
-    /**
-     * Formats a Date into a XEP-0082 - XMPP Date and Time Profiles string.
-     * 
-     * @param date the time value to be formatted into a time string
-     * @return the formatted time string in XEP-0082 format
-     */
-    public static String formatXEP0082Date(Date date) {
-        synchronized (dateTimeFormatter) {
-            return dateTimeFormatter.format(date);
-        }
-    }
-
-    public static String formatDate(Date toFormat, DateFormatType type)
-    {
-    	return null;
-    }
-    
     /**
      * Returns the name portion of a XMPP address. For example, for the
      * address "matt@jivesoftware.com/Smack", "matt" would be returned. If no
@@ -518,111 +284,53 @@ public class StringUtils {
     }
 
     /**
-     * Encodes a string for use in an XML attribute by escaping characters with
-     * a special meaning. In particular, white spaces are encoded as character
-     * references, such that they are not replaced by ' ' on parsing.
-     */
-    private static String xmlAttribEncodeBinary(String value) {
-        StringBuilder s = new StringBuilder();
-        char buf[] = value.toCharArray();
-        for (char c : buf) {
-            switch (c) {
-            case '<': s.append("&lt;"); break;
-            case '>': s.append("&gt;"); break;
-            case '&': s.append("&amp;"); break;
-            case '"': s.append("&quot;"); break;
-            case '\'': s.append("&apos;"); break;
-            default:
-                if (c <= 0x1f || (0x7f <= c && c <= 0x9f)) { // includes \t, \n, \r
-                    s.append("&#x");
-                    s.append(String.format("%X", (int)c));
-                    s.append(';');
-                } else  {
-                    s.append(c);
-                }
-            }
-        }
-        return s.toString();
-    }
-
-    /**
-     * Returns a string representing a XML attribute. The value parameter is escaped as necessary. In particular,
-     * white spaces are encoded as character references, such that they are not replaced by ' ' on parsing.
-     * @param name name of the XML attribute
-     * @param value value of the XML attribute
-     */
-    public static String xmlAttrib(String name, String value) {
-        return name + "=\"" + xmlAttribEncodeBinary(value) + "\"";
-    }
-
-
-    /**
      * Escapes all necessary characters in the String so that it can be used
      * in an XML doc.
-     *
-     * <strong>Warning:</strong> This method does not escape unicode character references
-     * (i.e. references of the from &#235;) 
      *
      * @param string the string to escape.
      * @return the string with appropriate characters escaped.
      */
-    public static String escapeForXML(String string) {
+    public static CharSequence escapeForXML(final String string) {
         if (string == null) {
             return null;
         }
+        final char[] input = string.toCharArray();
+        final int len = input.length;
+        final StringBuilder out = new StringBuilder((int)(len*1.3));
+        CharSequence toAppend;
         char ch;
-        int i=0;
-        int last=0;
-        char[] input = string.toCharArray();
-        int len = input.length;
-        StringBuilder out = new StringBuilder((int)(len*1.3));
-        for (; i < len; i++) {
+        int last = 0;
+        int i = 0;
+        while (i < len) {
+            toAppend = null;
             ch = input[i];
-            if (ch > '>') {
+            switch(ch) {
+            case '<':
+                toAppend = LT_ENCODE;
+                break;
+            case '>':
+                toAppend = GT_ENCODE;
+                break;
+            case '&':
+                toAppend = AMP_ENCODE;
+                break;
+            case '"':
+                toAppend = QUOTE_ENCODE;
+                break;
+            case '\'':
+                toAppend = APOS_ENCODE;
+                break;
+            default:
+                break;
             }
-            else if (ch == '<') {
+            if (toAppend != null) {
                 if (i > last) {
                     out.append(input, last, i - last);
                 }
-                last = i + 1;
-                out.append(LT_ENCODE);
-            }
-            else if (ch == '>') {
-                if (i > last) {
-                    out.append(input, last, i - last);
-                }
-                last = i + 1;
-                out.append(GT_ENCODE);
-            }
-
-            else if (ch == '&') {
-                if (i > last) {
-                    out.append(input, last, i - last);
-                }
-                // Do nothing if the string is of the form &#235; (unicode value)
-                if (!(len > i + 5
-                    && input[i + 1] == '#'
-                    && Character.isDigit(input[i + 2])
-                    && Character.isDigit(input[i + 3])
-                    && Character.isDigit(input[i + 4])
-                    && input[i + 5] == ';')) {
-                        last = i + 1;
-                        out.append(AMP_ENCODE);
-                    }
-            }
-            else if (ch == '"') {
-                if (i > last) {
-                    out.append(input, last, i - last);
-                }
-                last = i + 1;
-                out.append(QUOTE_ENCODE);
-            }
-            else if (ch == '\'') {
-                if (i > last) {
-                    out.append(input, last, i - last);
-                }
-                last = i + 1;
-                out.append(APOS_ENCODE);
+                out.append(toAppend);
+                last = ++i;
+            } else {
+                i++;
             }
         }
         if (last == 0) {
@@ -631,7 +339,7 @@ public class StringUtils {
         if (i > last) {
             out.append(input, last, i - last);
         }
-        return out.toString();
+        return out;
     }
 
     /**
@@ -804,38 +512,18 @@ public class StringUtils {
         return new String(randBuffer);
     }
 
-    private StringUtils() {
-        // Not instantiable.
+    /**
+     * Returns true if string is not null and is not empty, false otherwise
+     * Examples:
+     *    isNotEmpty(null) - false
+     *    isNotEmpty("") - false
+     *    isNotEmpty(" ") - true
+     *    isNotEmpty("empty") - true
+     *
+     * @param string checked String
+     * @return true if string is not null and is not empty, false otherwise
+     */
+    public static boolean isNotEmpty(CharSequence string) {
+        return string != null && string.length() != 0;
     }
-    
-    private static class PatternCouplings {
-    	Pattern pattern;
-    	DateFormat formatter;
-    	boolean needToConvertTimeZone = false;
-    	
-    	public PatternCouplings(Pattern datePattern, DateFormat dateFormat) {
-    		pattern = datePattern;
-    		formatter = dateFormat;
-		}
-
-    	public PatternCouplings(Pattern datePattern, DateFormat dateFormat, boolean shouldConvertToRFC822) {
-    		pattern = datePattern;
-    		formatter = dateFormat;
-    		needToConvertTimeZone = shouldConvertToRFC822;
-		}
-    	
-    	public String convertTime(String dateString) {
-            if (dateString.charAt(dateString.length() - 1) == 'Z') {
-                return dateString.replace("Z", "+0000");
-            }
-            else {
-            	// If the time zone wasn't specified with 'Z', then it's in
-            	// ISO8601 format (i.e. '(+|-)HH:mm')
-            	// RFC822 needs a similar format just without the colon (i.e.
-            	// '(+|-)HHmm)'), so remove it
-                return dateString.replaceAll("([\\+\\-]\\d\\d):(\\d\\d)","$1$2");
-    		}
-    	}
-	}
-
 }

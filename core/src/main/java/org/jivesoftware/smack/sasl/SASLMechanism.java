@@ -16,14 +16,15 @@
  */
 package org.jivesoftware.smack.sasl;
 
-import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.SASLAuthentication;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.util.StringUtils;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.HashMap;
+
 import javax.security.auth.callback.CallbackHandler;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.callback.Callback;
@@ -40,10 +41,10 @@ import javax.security.sasl.SaslException;
  * <ul>
  *  <li>{@link #getName()} -- returns the common name of the SASL mechanism.</li>
  * </ul>
- * Subclasses will likely want to implement their own versions of these mthods:
- *  <li>{@link #authenticate(String, String, String)} -- Initiate authentication stanza using the
+ * Subclasses will likely want to implement their own versions of these methods:
+ *  <li>{@link #authenticate(String, String, String, String)} -- Initiate authentication stanza using the
  *  deprecated method.</li>
- *  <li>{@link #authenticate(String, String, CallbackHandler)} -- Initiate authentication stanza
+ *  <li>{@link #authenticate(String, CallbackHandler)} -- Initiate authentication stanza
  *  using the CallbackHandler method.</li>
  *  <li>{@link #challengeReceived(String)} -- Handle a challenge from the server.</li>
  * </ul>
@@ -68,9 +69,7 @@ import javax.security.sasl.SaslException;
  *    sample:
  *    <challenge xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
  *        cnNwYXV0aD1lYTQwZjYwMzM1YzQyN2I1NTI3Yjg0ZGJhYmNkZmZmZA==
- *    </challenge>       
- * 
-
+ *    </challenge>
  *
  * @author Jay Kline
  */
@@ -89,7 +88,7 @@ public abstract class SASLMechanism implements CallbackHandler {
     /**
      * Builds and sends the <tt>auth</tt> stanza to the server. Note that this method of
      * authentication is not recommended, since it is very inflexable. Use
-     * {@link #authenticate(String, String, CallbackHandler)} whenever possible.
+     * {@link #authenticate(String, CallbackHandler)} whenever possible.
      * 
      * Explanation of auth stanza:
      * 
@@ -131,71 +130,51 @@ public abstract class SASLMechanism implements CallbackHandler {
      * serviceName format is: host [ "/" serv-name ] as per RFC-2831
      * @param password the password for this account.
      * @throws IOException If a network error occurs while authenticating.
-     * @throws XMPPException If a protocol error occurs or the user is not authenticated.
+     * @throws SaslException
+     * @throws NotConnectedException 
      */
-    public void authenticate(String username, String host, String serviceName, String password) throws IOException, XMPPException {
+    public void authenticate(String username, String host, String serviceName, String password) throws IOException, SaslException, NotConnectedException {
         //Since we were not provided with a CallbackHandler, we will use our own with the given
         //information
 
         //Set the authenticationID as the username, since they must be the same in this case.
         this.authenticationId = username;
         this.password = password;
-        this.hostname = host;        
+        this.hostname = host;
 
         String[] mechanisms = { getName() };
-        Map<String,String> props = new HashMap<String,String>();        
-        sc = Sasl.createSaslClient(mechanisms, username, "xmpp", serviceName, props, this);
+        Map<String,String> props = new HashMap<String,String>();
+        sc = Sasl.createSaslClient(mechanisms, null, "xmpp", serviceName, props, this);
         authenticate();
     }
 
-    /**
-     * Same as {@link #authenticate(String, String, String, String)}, but with the hostname used as the serviceName.
-     * <p>
-     * Kept for backward compatibility only.
-     * 
-     * @param username the username of the user being authenticated.
-     * @param host the hostname where the user account resides.
-     * @param password the password for this account.
-     * @throws IOException If a network error occurs while authenticating.
-     * @throws XMPPException If a protocol error occurs or the user is not authenticated.
-     * @deprecated Please use {@link #authenticate(String, String, String, String)} instead.
-     */
-    public void authenticate(String username, String host, String password) throws IOException, XMPPException {
-        authenticate(username, host, host, password);
-    }
-    
     /**
      * Builds and sends the <tt>auth</tt> stanza to the server. The callback handler will handle
      * any additional information, such as the authentication ID or realm, if it is needed.
      *
-     * @param username the username of the user being authenticated.
      * @param host     the hostname where the user account resides.
      * @param cbh      the CallbackHandler to obtain user information.
      * @throws IOException If a network error occures while authenticating.
-     * @throws XMPPException If a protocol error occurs or the user is not authenticated.
+     * @throws SaslException If a protocol error occurs or the user is not authenticated.
+     * @throws NotConnectedException 
      */
-    public void authenticate(String username, String host, CallbackHandler cbh) throws IOException, XMPPException {
+    public void authenticate(String host, CallbackHandler cbh) throws IOException, SaslException, NotConnectedException {
         String[] mechanisms = { getName() };
         Map<String,String> props = new HashMap<String,String>();
-        sc = Sasl.createSaslClient(mechanisms, username, "xmpp", host, props, cbh);
+        sc = Sasl.createSaslClient(mechanisms, null, "xmpp", host, props, cbh);
         authenticate();
     }
 
-    protected void authenticate() throws IOException, XMPPException {
+    protected void authenticate() throws IOException, SaslException, NotConnectedException {
         String authenticationText = null;
-        try {
-            if(sc.hasInitialResponse()) {
-                byte[] response = sc.evaluateChallenge(new byte[0]);
-                authenticationText = StringUtils.encodeBase64(response, false);
-            }
-        } catch (SaslException e) {
-            throw new XMPPException("SASL authentication failed", e);
+        if (sc.hasInitialResponse()) {
+            byte[] response = sc.evaluateChallenge(new byte[0]);
+            authenticationText = StringUtils.encodeBase64(response, false);
         }
 
         // Send the authentication to the server
         getSASLAuthentication().send(new AuthMechanism(getName(), authenticationText));
     }
-
 
     /**
      * The server is challenging the SASL mechanism for the stanza he just sent. Send a
@@ -203,8 +182,9 @@ public abstract class SASLMechanism implements CallbackHandler {
      *
      * @param challenge a base64 encoded string representing the challenge.
      * @throws IOException if an exception sending the response occurs.
+     * @throws NotConnectedException 
      */
-    public void challengeReceived(String challenge) throws IOException {
+    public void challengeReceived(String challenge) throws IOException, NotConnectedException {
         byte response[];
         if(challenge != null) {
             response = sc.evaluateChallenge(StringUtils.decodeBase64(challenge));
@@ -230,7 +210,6 @@ public abstract class SASLMechanism implements CallbackHandler {
      * @return the common name of the SASL mechanism.
      */
     protected abstract String getName();
-
 
     protected SASLAuthentication getSASLAuthentication() {
         return saslAuthentication;
@@ -268,7 +247,7 @@ public abstract class SASLMechanism implements CallbackHandler {
     /**
      * Initiating SASL authentication by select a mechanism.
      */
-    public class AuthMechanism extends Packet {
+    public static class AuthMechanism extends Packet {
         final private String name;
         final private String authenticationText;
 
@@ -318,7 +297,7 @@ public abstract class SASLMechanism implements CallbackHandler {
     /**
      * A SASL response stanza.
      */
-    public class Response extends Packet {
+    public static class Response extends Packet {
         final private String authenticationText;
 
         public Response() {
@@ -370,11 +349,19 @@ public abstract class SASLMechanism implements CallbackHandler {
     /**
      * A SASL failure stanza.
      */
-    public static class Failure extends Packet {
-        final private String condition;
+    public static class SASLFailure extends Packet {
+        private final SASLError saslError;
+        private final String saslErrorString;
 
-        public Failure(String condition) {
-            this.condition = condition;
+        public SASLFailure(String saslError) {
+            SASLError error = SASLError.fromString(saslError);
+            if (error == null) {
+                // RFC6120 6.5 states that unknown condition must be treat as generic authentication failure.
+                this.saslError = SASLError.not_authorized;
+            } else {
+                this.saslError = error;
+            }
+            this.saslErrorString = saslError;
         }
 
         /**
@@ -382,19 +369,24 @@ public abstract class SASLMechanism implements CallbackHandler {
          * 
          * @return the SASL related error condition.
          */
-        public String getCondition() {
-            return condition;
+        public SASLError getSASLError() {
+            return saslError;
+        }
+
+        /**
+         * 
+         * @return the SASL error as String
+         */
+        public String getSASLErrorString() {
+            return saslErrorString;
         }
 
         public String toXML() {
             StringBuilder stanza = new StringBuilder();
             stanza.append("<failure xmlns=\"urn:ietf:params:xml:ns:xmpp-sasl\">");
-            if (condition != null &&
-                    condition.trim().length() > 0) {
-                stanza.append("<").append(condition).append("/>");
-            }
+            stanza.append("<").append(saslErrorString).append("/>");
             stanza.append("</failure>");
             return stanza.toString();
         }
-    }        
+    }
 }

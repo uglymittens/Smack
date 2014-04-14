@@ -24,6 +24,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Logger;
 
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.jingle.JingleSession;
 
@@ -89,12 +91,12 @@ public abstract class TransportResolver {
     /**
      * Initialize the Resolver
      */
-    public abstract void initialize() throws XMPPException;
+    public abstract void initialize() throws XMPPException, SmackException;
 
     /**
      * Start a the resolution.
      */
-    public abstract void resolve(JingleSession session) throws XMPPException;
+    public abstract void resolve(JingleSession session) throws XMPPException, SmackException;
 
     /**
      * Clear the list of candidates and start a new resolution process.
@@ -140,7 +142,7 @@ public abstract class TransportResolver {
     /**
      * Chack if the Transport Resolver is initialized
      *
-     * @return
+     * @return true if initialized
      */
     public synchronized boolean isInitialized() {
         return initialized;
@@ -207,8 +209,9 @@ public abstract class TransportResolver {
      * Trigger a new candidate added event.
      *
      * @param cand The candidate added to the list of candidates.
+     * @throws NotConnectedException 
      */
-    protected void triggerCandidateAdded(TransportCandidate cand) {
+    protected void triggerCandidateAdded(TransportCandidate cand) throws NotConnectedException {
         Iterator<TransportResolverListener> iter = getListenersList().iterator();
         while (iter.hasNext()) {
             TransportResolverListener trl = iter.next();
@@ -263,8 +266,9 @@ public abstract class TransportResolver {
      * Add a new transport candidate
      *
      * @param cand The candidate to add
+     * @throws NotConnectedException 
      */
-    protected void addCandidate(TransportCandidate cand) {
+    protected void addCandidate(TransportCandidate cand) throws NotConnectedException {
         synchronized (candidates) {
             if (!candidates.contains(cand))
                 candidates.add(cand);
@@ -352,8 +356,9 @@ public abstract class TransportResolver {
 
     /**
      * Initialize Transport Resolver and wait until it is complete unitialized.
+     * @throws SmackException 
      */
-    public void initializeAndWait() throws XMPPException {
+    public void initializeAndWait() throws XMPPException, SmackException {
         this.initialize();
         try {
             LOGGER.fine("Initializing transport resolver...");

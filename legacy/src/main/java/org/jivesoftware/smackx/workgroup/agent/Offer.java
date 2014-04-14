@@ -17,7 +17,8 @@
 
 package org.jivesoftware.smackx.workgroup.agent;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
 
@@ -35,7 +36,7 @@ import java.util.Map;
  */
 public class Offer {
 
-    private Connection connection;
+    private XMPPConnection connection;
     private AgentSession session;
 
     private String sessionID;
@@ -62,7 +63,7 @@ public class Offer {
      * @param content content of the offer. The content explains the reason for the offer
      *        (e.g. user request, transfer)
      */
-    Offer(Connection conn, AgentSession agentSession, String userID,
+    Offer(XMPPConnection conn, AgentSession agentSession, String userID,
             String userJID, String workgroupName, Date expiresDate,
             String sessionID, Map<String, List<String>> metaData, OfferContent content)
     {
@@ -79,8 +80,9 @@ public class Offer {
 
     /**
      * Accepts the offer.
+     * @throws NotConnectedException 
      */
-    public void accept() {
+    public void accept() throws NotConnectedException {
         Packet acceptPacket = new AcceptPacket(this.session.getWorkgroupJID());
         connection.sendPacket(acceptPacket);
         // TODO: listen for a reply.
@@ -89,8 +91,9 @@ public class Offer {
 
     /**
      * Rejects the offer.
+     * @throws NotConnectedException 
      */
-    public void reject() {
+    public void reject() throws NotConnectedException {
         RejectPacket rejectPacket = new RejectPacket(this.session.getWorkgroupJID());
         connection.sendPacket(rejectPacket);
         // TODO: listen for a reply.

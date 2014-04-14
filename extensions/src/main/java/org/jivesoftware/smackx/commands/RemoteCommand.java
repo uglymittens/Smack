@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smackx.commands;
 
 import org.jivesoftware.smack.SmackConfiguration;
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smackx.commands.packet.AdHocCommandData;
 import org.jivesoftware.smackx.xdata.Form;
@@ -43,7 +44,7 @@ public class RemoteCommand extends AdHocCommand {
     /**
      * The connection that is used to execute this command
      */
-    private Connection connection;
+    private XMPPConnection connection;
 
     /**
      * The full JID of the command host
@@ -71,7 +72,7 @@ public class RemoteCommand extends AdHocCommand {
      * @param node the identifier of the command.
      * @param jid the JID of the host.
      */
-    protected RemoteCommand(Connection connection, String node, String jid) {
+    protected RemoteCommand(XMPPConnection connection, String node, String jid) {
         super();
         this.connection = connection;
         this.jid = jid;
@@ -80,17 +81,17 @@ public class RemoteCommand extends AdHocCommand {
     }
 
     @Override
-    public void cancel() throws XMPPException {
+    public void cancel() throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.cancel, packetReplyTimeout);
     }
 
     @Override
-    public void complete(Form form) throws XMPPException {
+    public void complete(Form form) throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.complete, form, packetReplyTimeout);
     }
 
     @Override
-    public void execute() throws XMPPException {
+    public void execute() throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.execute, packetReplyTimeout);
     }
 
@@ -100,23 +101,25 @@ public class RemoteCommand extends AdHocCommand {
      * there is a problem executing the command it throws an XMPPException.
      *
      * @param form the form anwser of the previous stage.
-     * @throws XMPPException if an error occurs.
+     * @throws XMPPErrorException if an error occurs.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void execute(Form form) throws XMPPException {
+    public void execute(Form form) throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.execute, form, packetReplyTimeout);
     }
 
     @Override
-    public void next(Form form) throws XMPPException {
+    public void next(Form form) throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.next, form, packetReplyTimeout);
     }
 
     @Override
-    public void prev() throws XMPPException {
+    public void prev() throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(Action.prev, packetReplyTimeout);
     }
 
-    private void executeAction(Action action, long packetReplyTimeout) throws XMPPException {
+    private void executeAction(Action action, long packetReplyTimeout) throws NoResponseException, XMPPErrorException, NotConnectedException {
         executeAction(action, null, packetReplyTimeout);
     }
 
@@ -128,9 +131,11 @@ public class RemoteCommand extends AdHocCommand {
      * @param action the action to execute.
      * @param form the form with the information.
      * @param timeout the amount of time to wait for a reply.
-     * @throws XMPPException if there is a problem executing the command.
+     * @throws XMPPErrorException if there is a problem executing the command.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    private void executeAction(Action action, Form form, long timeout) throws XMPPException {
+    private void executeAction(Action action, Form form, long timeout) throws NoResponseException, XMPPErrorException, NotConnectedException {
         // TODO: Check that all the required fields of the form were filled, if
         // TODO: not throw the corresponding exeption. This will make a faster response,
         // TODO: since the request is stoped before it's sent.
@@ -155,27 +160,5 @@ public class RemoteCommand extends AdHocCommand {
     @Override
     public String getOwnerJID() {
         return jid;
-    }
-
-    /**
-     * Returns the number of milliseconds to wait for a respone. The
-     * {@link SmackConfiguration#getPacketReplyTimeout default} value
-     * should be adjusted for commands that can take a long time to execute.
-     *
-     * @return the number of milliseconds to wait for responses.
-     */
-    public long getPacketReplyTimeout() {
-        return packetReplyTimeout;
-    }
-
-    /**
-     * Returns the number of milliseconds to wait for a respone. The
-     * {@link SmackConfiguration#getPacketReplyTimeout default} value
-     * should be adjusted for commands that can take a long time to execute.
-     *
-     * @param packetReplyTimeout the number of milliseconds to wait for responses.
-     */
-    public void setPacketReplyTimeout(long packetReplyTimeout) {
-        this.packetReplyTimeout = packetReplyTimeout;
     }
 }

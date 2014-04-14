@@ -20,10 +20,10 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
-import java.util.Iterator;
+import java.util.List;
 import java.util.UnknownFormatConversionException;
 
-import org.jivesoftware.smack.util.StringUtils;
+import org.jivesoftware.smack.util.XmppDateTime;
 import org.jivesoftware.smackx.xdata.Form;
 import org.jivesoftware.smackx.xdata.FormField;
 import org.jivesoftware.smackx.xdata.packet.DataForm;
@@ -128,7 +128,7 @@ public class SubscribeForm extends Form
 		String dateTime = getFieldValue(SubscribeOptionFields.expire);
 		try
 		{
-			return StringUtils.parseDate(dateTime);
+			return XmppDateTime.parseDate(dateTime);
 		}
 		catch (ParseException e)
 		{
@@ -146,7 +146,7 @@ public class SubscribeForm extends Form
 	public void setExpiry(Date expire)
 	{
 		addField(SubscribeOptionFields.expire, FormField.TYPE_TEXT_SINGLE);
-		setAnswer(SubscribeOptionFields.expire.getFieldName(), StringUtils.formatXEP0082Date(expire));
+		setAnswer(SubscribeOptionFields.expire.getFieldName(), XmppDateTime.formatXEP0082Date(expire));
 	}
 	
 	/**
@@ -176,19 +176,17 @@ public class SubscribeForm extends Form
 	 * Gets the {@link PresenceState} for which an entity wants to receive 
 	 * notifications.
 	 * 
-	 * @return iterator over the list of states
+	 * @return the list of states
 	 */
-	public Iterator<PresenceState> getShowValues()
+	public List<PresenceState> getShowValues()
 	{
 		ArrayList<PresenceState> result = new ArrayList<PresenceState>(5);
-		Iterator<String > it = getFieldValues(SubscribeOptionFields.show_values);
 		
-		while (it.hasNext())
+		for (String state : getFieldValues(SubscribeOptionFields.show_values))
 		{
-			String state = it.next();
 			result.add(PresenceState.valueOf(state));
 		}
-		return result.iterator();
+		return result;
 	}
 	
 	/**
@@ -219,10 +217,10 @@ public class SubscribeForm extends Form
 	{
 		FormField formField = getField(field.getFieldName());
 		
-		return formField.getValues().next();
+		return formField.getValues().get(0);
 	}
 
-	private Iterator<String> getFieldValues(SubscribeOptionFields field)
+	private List<String> getFieldValues(SubscribeOptionFields field)
 	{
 		FormField formField = getField(field.getFieldName());
 		

@@ -20,6 +20,8 @@ package org.jivesoftware.smack;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.XMPPError;
@@ -35,37 +37,37 @@ import org.jivesoftware.smack.packet.XMPPError;
  * older packets are automatically dropped.  The default number is retrieved by 
  * {@link SmackConfiguration#getPacketCollectorSize()}.
  *
- * @see Connection#createPacketCollector(PacketFilter)
+ * @see XMPPConnection#createPacketCollector(PacketFilter)
  * @author Matt Tucker
  */
 public class PacketCollector {
 
     private PacketFilter packetFilter;
     private ArrayBlockingQueue<Packet> resultQueue;
-    private Connection connection;
+    private XMPPConnection connection;
     private boolean cancelled = false;
 
     /**
      * Creates a new packet collector. If the packet filter is <tt>null</tt>, then
      * all packets will match this collector.
      *
-     * @param conection the connection the collector is tied to.
+     * @param connection the connection the collector is tied to.
      * @param packetFilter determines which packets will be returned by this collector.
      */
-    protected PacketCollector(Connection conection, PacketFilter packetFilter) {
-    	this(conection, packetFilter, SmackConfiguration.getPacketCollectorSize());
+    protected PacketCollector(XMPPConnection connection, PacketFilter packetFilter) {
+        this(connection, packetFilter, SmackConfiguration.getPacketCollectorSize());
     }
 
     /**
      * Creates a new packet collector. If the packet filter is <tt>null</tt>, then
      * all packets will match this collector.
      *
-     * @param conection the connection the collector is tied to.
+     * @param connection the connection the collector is tied to.
      * @param packetFilter determines which packets will be returned by this collector.
      * @param maxSize the maximum number of packets that will be stored in the collector.
      */
-    protected PacketCollector(Connection conection, PacketFilter packetFilter, int maxSize) {
-        this.connection = conection;
+    protected PacketCollector(XMPPConnection connection, PacketFilter packetFilter, int maxSize) {
+        this.connection = connection;
         this.packetFilter = packetFilter;
         this.resultQueue = new ArrayBlockingQueue<Packet>(maxSize);
     }
@@ -152,9 +154,10 @@ public class PacketCollector {
      * <tt>null</tt> will be returned. This method does also cancel the PacketCollector.
      * 
      * @return the next available packet.
-     * @throws XMPPException
+     * @throws XMPPErrorException in case an error response.
+     * @throws NoResponseException if there was no response from the server.
      */
-    public Packet nextResultOrThrow() throws XMPPException {
+    public Packet nextResultOrThrow() throws NoResponseException, XMPPErrorException {
         return nextResultOrThrow(connection.getPacketReplyTimeout());
     }
 
@@ -164,18 +167,19 @@ public class PacketCollector {
      * 
      * @param timeout the amount of time to wait for the next packet (in milleseconds).
      * @return the next available packet.
-     * @throws XMPPException in case of no response or error response
+     * @throws NoResponseException if there was no response from the server.
+     * @throws XMPPErrorException in case an error response.
      */
-    public Packet nextResultOrThrow(long timeout) throws XMPPException {
+    public Packet nextResultOrThrow(long timeout) throws NoResponseException, XMPPErrorException {
         Packet result = nextResult(timeout);
         cancel();
         if (result == null) {
-            throw new XMPPException(SmackError.NO_RESPONSE_FROM_SERVER);
+            throw new NoResponseException();
         }
 
         XMPPError xmppError = result.getError();
         if (xmppError != null) {
-            throw new XMPPException(xmppError);
+            throw new XMPPErrorException(xmppError);
         }
 
         return result;

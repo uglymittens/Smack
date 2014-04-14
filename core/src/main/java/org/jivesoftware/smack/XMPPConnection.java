@@ -3,7 +3,7 @@
  * $Revision$
  * $Date$
  *
- * Copyright 2003-2007 Jive Software.
+ * Copyright 2009 Jive Software.
  *
  * All rights reserved. Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smack;
 
 import org.jivesoftware.smack.compression.XMPPInputOutputStream;
@@ -41,328 +40,468 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
+import java.io.Reader;
+import java.io.Writer;
 import java.lang.reflect.Constructor;
-import java.net.Socket;
-import java.net.UnknownHostException;
-import java.security.KeyStore;
-import java.security.Provider;
-import java.security.Security;
 import java.util.Collection;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.Collections;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import javax.security.sasl.SaslException;
+
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.SmackException.ConnectionException;
+import org.jivesoftware.smack.compression.XMPPInputOutputStream;
+import org.jivesoftware.smack.debugger.SmackDebugger;
+import org.jivesoftware.smack.filter.IQReplyFilter;
+import org.jivesoftware.smack.filter.PacketFilter;
+import org.jivesoftware.smack.packet.IQ;
+import org.jivesoftware.smack.packet.Packet;
+import org.jivesoftware.smack.packet.Presence;
 
 /**
- * Creates a socket connection to a XMPP server. This is the default connection
- * to a Jabber server and is specified in the XMPP Core (RFC 3920).
+ * The abstract XMPPConnection class provides an interface for connections to a
+ * XMPP server and implements shared methods which are used by the
+ * different types of connections (e.g. XMPPTCPConnection or XMPPBOSHConnection).
  * 
- * @see Connection
+ * To create a connection to a XMPP server a simple usage of this API might
+ * look like the following:
+ * <pre>
+ * // Create a connection to the igniterealtime.org XMPP server.
+ * XMPPConnection con = new XMPPTCPConnection("igniterealtime.org");
+ * // Connect to the server
+ * con.connect();
+ * // Most servers require you to login before performing other tasks.
+ * con.login("jsmith", "mypass");
+ * // Start a new conversation with John Doe and send him a message.
+ * Chat chat = connection.getChatManager().createChat("jdoe@igniterealtime.org"</font>, new MessageListener() {
+ * <p/>
+ *     public void processMessage(Chat chat, Message message) {
+ *         // Print out any messages we get back to standard out.
+ *         System.out.println(<font color="green">"Received message: "</font> + message);
+ *     }
+ * });
+ * chat.sendMessage(<font color="green">"Howdy!"</font>);
+ * // Disconnect from the server
+ * con.disconnect();
+ * </pre>
+ * <p/>
+ * Connections can be reused between connections. This means that an Connection
+ * may be connected, disconnected and then connected again. Listeners of the Connection
+ * will be retained accross connections.<p>
+ * <p/>
+ * If a connected XMPPConnection gets disconnected abruptly then it will try to reconnect
+ * again. To stop the reconnection process, use {@link #disconnect()}. Once stopped
+ * you can use {@link #connect()} to manually connect to the server.
+ * 
  * @author Matt Tucker
+ * @author Guenther Niess
  */
-public class XMPPConnection extends Connection {
+public abstract class XMPPConnection {
+    private static final Logger LOGGER = Logger.getLogger(XMPPConnection.class.getName());
+    
+    /** 
+     * Counter to uniquely identify connections that are created.
+     */
+    private final static AtomicInteger connectionCounter = new AtomicInteger(0);
 
     /**
-     * The socket which is used for this connection.
+     * A set of listeners which will be invoked if a new connection is created.
      */
-    Socket socket;
+    private final static Set<ConnectionCreationListener> connectionEstablishedListeners =
+            new CopyOnWriteArraySet<ConnectionCreationListener>();
 
-    String connectionID = null;
-    private String user = null;
-    private boolean connected = false;
-    // socketClosed is used concurrent
-    // by XMPPConnection, PacketReader, PacketWriter
-    private volatile boolean socketClosed = false;
-
-    /**
-     * Flag that indicates if the user is currently authenticated with the server.
-     */
-    private boolean authenticated = false;
-    /**
-     * Flag that indicates if the user was authenticated with the server when the connection
-     * to the server was closed (abruptly or not).
-     */
-    private boolean wasAuthenticated = false;
-    private boolean anonymous = false;
-    private boolean usingTLS = false;
-
-    private ParsingExceptionCallback parsingExceptionCallback = SmackConfiguration.getDefaultParsingExceptionCallback();
-
-    PacketWriter packetWriter;
-    PacketReader packetReader;
-
-    Roster roster = null;
-
-    /**
-     * Collection of available stream compression methods offered by the server.
-     */
-    private Collection<String> compressionMethods;
-
-    /**
-     * Set to true by packet writer if the server acknowledged the compression
-     */
-    private boolean serverAckdCompression = false;
-
-    /**
-     * Creates a new connection to the specified XMPP server. A DNS SRV lookup will be
-     * performed to determine the IP address and port corresponding to the
-     * service name; if that lookup fails, it's assumed that server resides at
-     * <tt>serviceName</tt> with the default port of 5222. Encrypted connections (TLS)
-     * will be used if available, stream compression is disabled, and standard SASL
-     * mechanisms will be used for authentication.<p>
-     * <p/>
-     * This is the simplest constructor for connecting to an XMPP server. Alternatively,
-     * you can get fine-grained control over connection settings using the
-     * {@link #XMPPConnection(ConnectionConfiguration)} constructor.<p>
-     * <p/>
-     * Note that XMPPConnection constructors do not establish a connection to the server
-     * and you must call {@link #connect()}.<p>
-     * <p/>
-     * The CallbackHandler will only be used if the connection requires the client provide
-     * an SSL certificate to the server. The CallbackHandler must handle the PasswordCallback
-     * to prompt for a password to unlock the keystore containing the SSL certificate.
-     *
-     * @param serviceName the name of the XMPP server to connect to; e.g. <tt>example.com</tt>.
-     * @param callbackHandler the CallbackHandler used to prompt for the password to the keystore.
-     */
-    public XMPPConnection(String serviceName, CallbackHandler callbackHandler) {
-        // Create the configuration for this new connection
-        super(new ConnectionConfiguration(serviceName));
-        config.setCompressionEnabled(false);
-        config.setSASLAuthenticationEnabled(true);
-        config.setDebuggerEnabled(DEBUG_ENABLED);
-        config.setCallbackHandler(callbackHandler);
+    static {
+        // Ensure the SmackConfiguration class is loaded by calling a method in it.
+        SmackConfiguration.getVersion();
     }
 
     /**
-     * Creates a new XMPP connection in the same way {@link #XMPPConnection(String,CallbackHandler)} does, but
-     * with no callback handler for password prompting of the keystore.  This will work
-     * in most cases, provided the client is not required to provide a certificate to 
-     * the server.
-     *
-     * @param serviceName the name of the XMPP server to connect to; e.g. <tt>example.com</tt>.
+     * A collection of ConnectionListeners which listen for connection closing
+     * and reconnection events.
      */
-    public XMPPConnection(String serviceName) {
-        // Create the configuration for this new connection
-        super(new ConnectionConfiguration(serviceName));
-        config.setCompressionEnabled(false);
-        config.setSASLAuthenticationEnabled(true);
-        config.setDebuggerEnabled(DEBUG_ENABLED);
-    }
+    protected final Collection<ConnectionListener> connectionListeners =
+            new CopyOnWriteArrayList<ConnectionListener>();
 
     /**
-     * Creates a new XMPP connection in the same way {@link #XMPPConnection(ConnectionConfiguration,CallbackHandler)} does, but
-     * with no callback handler for password prompting of the keystore.  This will work
-     * in most cases, provided the client is not required to provide a certificate to 
-     * the server.
-     *
-     *
-     * @param config the connection configuration.
+     * A collection of PacketCollectors which collects packets for a specified filter
+     * and perform blocking and polling operations on the result queue.
      */
-    public XMPPConnection(ConnectionConfiguration config) {
-        super(config);
-    }
+    protected final Collection<PacketCollector> collectors = new ConcurrentLinkedQueue<PacketCollector>();
 
     /**
-     * Creates a new XMPP connection using the specified connection configuration.<p>
-     * <p/>
-     * Manually specifying connection configuration information is suitable for
-     * advanced users of the API. In many cases, using the
-     * {@link #XMPPConnection(String)} constructor is a better approach.<p>
-     * <p/>
-     * Note that XMPPConnection constructors do not establish a connection to the server
-     * and you must call {@link #connect()}.<p>
-     * <p/>
-     *
-     * The CallbackHandler will only be used if the connection requires the client provide
-     * an SSL certificate to the server. The CallbackHandler must handle the PasswordCallback
-     * to prompt for a password to unlock the keystore containing the SSL certificate.
-     *
-     * @param config the connection configuration.
-     * @param callbackHandler the CallbackHandler used to prompt for the password to the keystore.
+     * List of PacketListeners that will be notified when a new packet was received.
      */
-    public XMPPConnection(ConnectionConfiguration config, CallbackHandler callbackHandler) {
-        super(config);
-        config.setCallbackHandler(callbackHandler);
-    }
-	
-	public ConnectionConfiguration getConfig() {
-		return null;
-	}
-
-    public String getConnectionID() {
-        if (!isConnected()) {
-            return null;
-        }
-        return connectionID;
-    }
-
-    public String getUser() {
-        if (!isAuthenticated()) {
-            return null;
-        }
-        return user;
-    }
+    protected final Map<PacketListener, ListenerWrapper> recvListeners =
+            new ConcurrentHashMap<PacketListener, ListenerWrapper>();
 
     /**
-     * Install a parsing exception callback, which will be invoked once an exception is encountered while parsing a
-     * stanza
+     * List of PacketListeners that will be notified when a new packet was sent.
+     */
+    protected final Map<PacketListener, ListenerWrapper> sendListeners =
+            new ConcurrentHashMap<PacketListener, ListenerWrapper>();
+
+    /**
+     * List of PacketInterceptors that will be notified when a new packet is about to be
+     * sent to the server. These interceptors may modify the packet before it is being
+     * actually sent to the server.
+     */
+    protected final Map<PacketInterceptor, InterceptorWrapper> interceptors =
+            new ConcurrentHashMap<PacketInterceptor, InterceptorWrapper>();
+
+    /**
      * 
-     * @param callback the callback to install
      */
-    public void setParsingExceptionCallback(ParsingExceptionCallback callback) {
-        parsingExceptionCallback = callback;
+    private long packetReplyTimeout = SmackConfiguration.getDefaultPacketReplyTimeout();
+
+    /**
+     * The SmackDebugger allows to log and debug XML traffic.
+     */
+    protected SmackDebugger debugger = null;
+
+    /**
+     * The Reader which is used for the debugger.
+     */
+    protected Reader reader;
+
+    /**
+     * The Writer which is used for the debugger.
+     */
+    protected Writer writer;
+
+
+    /**
+     * The SASLAuthentication manager that is responsible for authenticating with the server.
+     */
+    protected SASLAuthentication saslAuthentication = new SASLAuthentication(this);
+
+    /**
+     * A number to uniquely identify connections that are created. This is distinct from the
+     * connection ID, which is a value sent by the server once a connection is made.
+     */
+    protected final int connectionCounterValue = connectionCounter.getAndIncrement();
+
+    /**
+     * Holds the initial configuration used while creating the connection.
+     */
+    protected final ConnectionConfiguration config;
+
+    /**
+     * Holds the Caps Node information for the used XMPP service (i.e. the XMPP server)
+     */
+    private String serviceCapsNode;
+
+    /**
+     * Defines how the from attribute of outgoing stanzas should be handled.
+     */
+    private FromMode fromMode = FromMode.OMITTED;
+
+    /**
+     * Stores whether the server supports rosterVersioning
+     */
+    private boolean rosterVersioningSupported = false;
+
+    protected XMPPInputOutputStream compressionHandler;
+
+    private final ScheduledExecutorService executorService = new ScheduledThreadPoolExecutor(2);
+
+    private Roster roster;
+
+    /**
+     * The used host to establish the connection to
+     */
+    private String host;
+
+    /**
+     * The used port to establish the connection to
+     */
+    private int port;
+
+    /**
+     * Create an executor to deliver incoming packets to listeners. We'll use a single thread with an unbounded queue.
+     */
+    private ExecutorService listenerExecutor = Executors.newSingleThreadExecutor(new ThreadFactory() {
+
+        public Thread newThread(Runnable runnable) {
+            Thread thread = new Thread(runnable,
+                    "Smack Listener Processor (" + connectionCounterValue + ")");
+            thread.setDaemon(true);
+            return thread;
+        }
+    });
+
+    /**
+     * Create a new XMPPConnection to a XMPP server.
+     * 
+     * @param configuration The configuration which is used to establish the connection.
+     */
+    protected XMPPConnection(ConnectionConfiguration configuration) {
+        config = configuration;
     }
 
     /**
-     * Get the current active parsing exception callback.
-     *  
-     * @return the active exception callback or null if there is none
+     * Returns the configuration used to connect to the server.
+     * 
+     * @return the configuration used to connect to the server.
      */
-    public ParsingExceptionCallback getParsingExceptionCallback() {
-        return parsingExceptionCallback;
+    protected ConnectionConfiguration getConfiguration() {
+        return config;
     }
 
-    @Override
-    public synchronized void login(String username, String password, String resource) throws XMPPException {
+    /**
+     * Returns the name of the service provided by the XMPP server for this connection.
+     * This is also called XMPP domain of the connected server. After
+     * authenticating with the server the returned value may be different.
+     * 
+     * @return the name of the service provided by the XMPP server.
+     */
+    public String getServiceName() {
+        return config.getServiceName();
+    }
+
+    /**
+     * Returns the host name of the server where the XMPP server is running. This would be the
+     * IP address of the server or a name that may be resolved by a DNS server.
+     * 
+     * @return the host name of the server where the XMPP server is running or null if not yet connected.
+     */
+    public String getHost() {
+        return host;
+    }
+
+    /**
+     * Returns the port number of the XMPP server for this connection. The default port
+     * for normal connections is 5222.
+     * 
+     * @return the port number of the XMPP server or 0 if not yet connected.
+     */
+    public int getPort() {
+        return port;
+    }
+
+    /**
+     * Returns the full XMPP address of the user that is logged in to the connection or
+     * <tt>null</tt> if not logged in yet. An XMPP address is in the form
+     * username@server/resource.
+     * 
+     * @return the full XMPP address of the user logged in.
+     */
+    public abstract String getUser();
+
+    /**
+     * Returns the connection ID for this connection, which is the value set by the server
+     * when opening a XMPP stream. If the server does not set a connection ID, this value
+     * will be null. This value will be <tt>null</tt> if not connected to the server.
+     * 
+     * @return the ID of this connection returned from the XMPP server or <tt>null</tt> if
+     *      not connected to the server.
+     */
+    public abstract String getConnectionID();
+
+    /**
+     * Returns true if currently connected to the XMPP server.
+     * 
+     * @return true if connected.
+     */
+    public abstract boolean isConnected();
+
+    /**
+     * Returns true if currently authenticated by successfully calling the login method.
+     * 
+     * @return true if authenticated.
+     */
+    public abstract boolean isAuthenticated();
+
+    /**
+     * Returns true if currently authenticated anonymously.
+     * 
+     * @return true if authenticated anonymously.
+     */
+    public abstract boolean isAnonymous();
+
+    /**
+     * Returns true if the connection to the server has successfully negotiated encryption. 
+     * 
+     * @return true if a secure connection to the server.
+     */
+    public abstract boolean isSecureConnection();
+
+    abstract void sendPacketInternal(Packet packet);
+
+    /**
+     * Returns true if network traffic is being compressed. When using stream compression network
+     * traffic can be reduced up to 90%. Therefore, stream compression is ideal when using a slow
+     * speed network connection. However, the server will need to use more CPU time in order to
+     * un/compress network data so under high load the server performance might be affected.
+     * 
+     * @return true if network traffic is being compressed.
+     */
+    public abstract boolean isUsingCompression();
+
+    /**
+     * Establishes a connection to the XMPP server and performs an automatic login
+     * only if the previous connection state was logged (authenticated). It basically
+     * creates and maintains a connection to the server.<p>
+     * <p/>
+     * Listeners will be preserved from a previous connection if the reconnection
+     * occurs after an abrupt termination.
+     * 
+     * @throws XMPPException if an error occurs on the XMPP protocol level.
+     * @throws SmackException if an error occurs somehwere else besides XMPP protocol level.
+     * @throws IOException 
+     * @throws ConnectionException with detailed information about the failed connection.
+     */
+    public abstract void connect() throws SmackException, IOException, XMPPException;
+
+    /**
+     * Logs in to the server using the strongest authentication mode supported by
+     * the server, then sets presence to available. If the server supports SASL authentication 
+     * then the user will be authenticated using SASL if not Non-SASL authentication will 
+     * be tried. If more than five seconds (default timeout) elapses in each step of the 
+     * authentication process without a response from the server, or if an error occurs, a 
+     * XMPPException will be thrown.<p>
+     * 
+     * Before logging in (i.e. authenticate) to the server the connection must be connected.
+     * 
+     * It is possible to log in without sending an initial available presence by using
+     * {@link ConnectionConfiguration#setSendPresence(boolean)}. If this connection is
+     * not interested in loading its roster upon login then use
+     * {@link ConnectionConfiguration#setRosterLoadedAtLogin(boolean)}.
+     * Finally, if you want to not pass a password and instead use a more advanced mechanism
+     * while using SASL then you may be interested in using
+     * {@link ConnectionConfiguration#setCallbackHandler(javax.security.auth.callback.CallbackHandler)}.
+     * For more advanced login settings see {@link ConnectionConfiguration}.
+     * 
+     * @param username the username.
+     * @param password the password or <tt>null</tt> if using a CallbackHandler.
+     * @throws XMPPException if an error occurs on the XMPP protocol level.
+     * @throws SmackException if an error occurs somehwere else besides XMPP protocol level.
+     * @throws IOException 
+     * @throws SaslException 
+     */
+    public void login(String username, String password) throws XMPPException, SmackException, SaslException, IOException {
+        login(username, password, "Smack");
+    }
+
+    /**
+     * Logs in to the server using the strongest authentication mode supported by
+     * the server, then sets presence to available. If the server supports SASL authentication 
+     * then the user will be authenticated using SASL if not Non-SASL authentication will 
+     * be tried. If more than five seconds (default timeout) elapses in each step of the 
+     * authentication process without a response from the server, or if an error occurs, a 
+     * XMPPException will be thrown.<p>
+     * 
+     * Before logging in (i.e. authenticate) to the server the connection must be connected.
+     * 
+     * It is possible to log in without sending an initial available presence by using
+     * {@link ConnectionConfiguration#setSendPresence(boolean)}. If this connection is
+     * not interested in loading its roster upon login then use
+     * {@link ConnectionConfiguration#setRosterLoadedAtLogin(boolean)}.
+     * Finally, if you want to not pass a password and instead use a more advanced mechanism
+     * while using SASL then you may be interested in using
+     * {@link ConnectionConfiguration#setCallbackHandler(javax.security.auth.callback.CallbackHandler)}.
+     * For more advanced login settings see {@link ConnectionConfiguration}.
+     * 
+     * @param username the username.
+     * @param password the password or <tt>null</tt> if using a CallbackHandler.
+     * @param resource the resource.
+     * @throws XMPPException if an error occurs on the XMPP protocol level.
+     * @throws SmackException if an error occurs somehwere else besides XMPP protocol level.
+     * @throws IOException 
+     * @throws SaslException 
+     */
+    public abstract void login(String username, String password, String resource) throws XMPPException, SmackException, SaslException, IOException;
+
+    /**
+     * Logs in to the server anonymously. Very few servers are configured to support anonymous
+     * authentication, so it's fairly likely logging in anonymously will fail. If anonymous login
+     * does succeed, your XMPP address will likely be in the form "123ABC@server/789XYZ" or
+     * "server/123ABC" (where "123ABC" and "789XYZ" is a random value generated by the server).
+     * 
+     * @throws XMPPException if an error occurs on the XMPP protocol level.
+     * @throws SmackException if an error occurs somehwere else besides XMPP protocol level.
+     * @throws IOException 
+     * @throws SaslException 
+     */
+    public abstract void loginAnonymously() throws XMPPException, SmackException, SaslException, IOException;
+
+    /**
+     * Sends the specified packet to the server.
+     * 
+     * @param packet the packet to send.
+     * @throws NotConnectedException 
+     */
+    public void sendPacket(Packet packet) throws NotConnectedException {
         if (!isConnected()) {
-            throw new IllegalStateException("Not connected to server.");
+            throw new NotConnectedException();
         }
-        if (authenticated) {
-            throw new IllegalStateException("Already logged in to server.");
+        if (packet == null) {
+            throw new NullPointerException("Packet is null.");
         }
-        // Do partial version of nameprep on the username.
-        username = username.toLowerCase().trim();
-
-        String response;
-        if (config.isSASLAuthenticationEnabled() &&
-                saslAuthentication.hasNonAnonymousAuthentication()) {
-            // Authenticate using SASL
-            if (password != null) {
-                response = saslAuthentication.authenticate(username, password, resource);
-            }
-            else {
-                response = saslAuthentication
-                        .authenticate(username, resource, config.getCallbackHandler());
-            }
+        switch (fromMode) {
+        case OMITTED:
+            packet.setFrom(null);
+            break;
+        case USER:
+            packet.setFrom(getUser());
+            break;
+        case UNCHANGED:
+        default:
+            break;
         }
-        else {
-            // Authenticate using Non-SASL
-            response = new NonSASLAuthentication(this).authenticate(username, password, resource);
-        }
-
-        // Set the user.
-        if (response != null) {
-            this.user = response;
-            // Update the serviceName with the one returned by the server
-            config.setServiceName(StringUtils.parseServer(response));
-        }
-        else {
-            this.user = username + "@" + getServiceName();
-            if (resource != null) {
-                this.user += "/" + resource;
-            }
-        }
-
-        // If compression is enabled then request the server to use stream compression
-        if (config.isCompressionEnabled()) {
-            useCompression();
-        }
-
-        // Indicate that we're now authenticated.
-        authenticated = true;
-        anonymous = false;
-
-        // Create the roster if it is not a reconnection or roster already created by getRoster()
-        if (this.roster == null) {
-            this.roster = new Roster(this);
-        }
-        if (config.isRosterLoadedAtLogin()) {
-            this.roster.reload();
-        }
-
-        // Set presence to online.
-        if (config.isSendPresence()) {
-            packetWriter.sendPacket(new Presence(Presence.Type.available));
-        }
-
-        // Stores the authentication for future reconnection
-        config.setLoginInfo(username, password, resource);
-
-        // If debugging is enabled, change the the debug window title to include the
-        // name we are now logged-in as.
-        // If DEBUG_ENABLED was set to true AFTER the connection was created the debugger
-        // will be null
-        if (config.isDebuggerEnabled() && debugger != null) {
-            debugger.userHasLogged(user);
-        }
+        // Invoke interceptors for the new packet that is about to be sent. Interceptors may modify
+        // the content of the packet.
+        firePacketInterceptors(packet);
+        sendPacketInternal(packet);
+        // Process packet writer listeners. Note that we're using the sending thread so it's
+        // expected that listeners are fast.
+        firePacketSendingListeners(packet);
     }
 
-    @Override
-    public synchronized void loginAnonymously() throws XMPPException {
-        if (!isConnected()) {
-            throw new IllegalStateException("Not connected to server.");
-        }
-        if (authenticated) {
-            throw new IllegalStateException("Already logged in to server.");
-        }
-
-        String response;
-        if (config.isSASLAuthenticationEnabled() &&
-                saslAuthentication.hasAnonymousAuthentication()) {
-            response = saslAuthentication.authenticateAnonymously();
-        }
-        else {
-            // Authenticate using Non-SASL
-            response = new NonSASLAuthentication(this).authenticateAnonymously();
-        }
-
-        // Set the user value.
-        this.user = response;
-        // Update the serviceName with the one returned by the server
-        config.setServiceName(StringUtils.parseServer(response));
-
-        // If compression is enabled then request the server to use stream compression
-        if (config.isCompressionEnabled()) {
-            useCompression();
-        }
-
-        // Set presence to online.
-        packetWriter.sendPacket(new Presence(Presence.Type.available));
-
-        // Indicate that we're now authenticated.
-        authenticated = true;
-        anonymous = true;
-
-        // If debugging is enabled, change the the debug window title to include the
-        // name we are now logged-in as.
-        // If DEBUG_ENABLED was set to true AFTER the connection was created the debugger
-        // will be null
-        if (config.isDebuggerEnabled() && debugger != null) {
-            debugger.userHasLogged(user);
-        }
-    }
-
+    /**
+     * Returns the roster for the user.
+     * <p>
+     * This method will never return <code>null</code>, instead if the user has not yet logged into
+     * the server or is logged in anonymously all modifying methods of the returned roster object
+     * like {@link Roster#createEntry(String, String, String[])},
+     * {@link Roster#removeEntry(RosterEntry)} , etc. except adding or removing
+     * {@link RosterListener}s will throw an IllegalStateException.
+     * 
+     * @return the user's roster.
+     * @throws IllegalStateException if the connection is anonymous
+     */
     public Roster getRoster() {
+        if (isAnonymous()) {
+            throw new IllegalStateException("Anonymous users can't have a roster");
+        }
         // synchronize against login()
         synchronized(this) {
-            // if connection is authenticated the roster is already set by login() 
-            // or a previous call to getRoster()
-            if (!isAuthenticated() || isAnonymous()) {
-                if (roster == null) {
-                    roster = new Roster(this);
-                }
+            if (roster == null) {
+                roster = new Roster(this);
+            }
+            if (!isAuthenticated()) {
                 return roster;
             }
         }
 
-        if (!config.isRosterLoadedAtLogin()) {
-            roster.reload();
-        }
         // If this is the first time the user has asked for the roster after calling
         // login, we want to wait for the server to send back the user's roster. This
         // behavior shields API users from having to worry about the fact that roster
@@ -370,7 +509,9 @@ public class XMPPConnection extends Connection {
         // changes to the roster. Note: because of this waiting logic, internal
         // Smack code should be wary about calling the getRoster method, and may need to
         // access the roster object directly.
-        if (!roster.rosterInitialized) {
+        // Also only check for rosterInitalized is isRosterLoadedAtLogin is set, otherwise the user
+        // has to manually call Roster.reload() before he can expect a initialized roster.
+        if (!roster.rosterInitialized && config.isRosterLoadedAtLogin()) {
             try {
                 synchronized (roster) {
                     long waitTime = SmackConfiguration.getDefaultPacketReplyTimeout();
@@ -392,622 +533,515 @@ public class XMPPConnection extends Connection {
         }
         return roster;
     }
-
-    public boolean isConnected() {
-        return connected;
-    }
-
-    public boolean isSecureConnection() {
-        return isUsingTLS();
-    }
-
-    public boolean isSocketClosed() {
-        return socketClosed;
-    }
-
-    public boolean isAuthenticated() {
-        return authenticated;
-    }
-
-    public boolean isAnonymous() {
-        return anonymous;
+    /**
+     * Returns the SASLAuthentication manager that is responsible for authenticating with
+     * the server.
+     * 
+     * @return the SASLAuthentication manager that is responsible for authenticating with
+     *         the server.
+     */
+    public SASLAuthentication getSASLAuthentication() {
+        return saslAuthentication;
     }
 
     /**
-     * Closes the connection by setting presence to unavailable then closing the stream to
-     * the XMPP server. The shutdown logic will be used during a planned disconnection or when
-     * dealing with an unexpected disconnection. Unlike {@link #disconnect()} the connection's
-     * packet reader, packet writer, and {@link Roster} will not be removed; thus
-     * connection's state is kept.
-     *
+     * Closes the connection by setting presence to unavailable then closing the connection to
+     * the XMPP server. The XMPPConnection can still be used for connecting to the server
+     * again.<p>
+     * <p/>
+     * This method cleans up all resources used by the connection. Therefore, the roster,
+     * listeners and other stateful objects cannot be re-used by simply calling connect()
+     * on this connection again. This is unlike the behavior during unexpected disconnects
+     * (and subsequent connections). In that case, all state is preserved to allow for
+     * more seamless error recovery.
+     */
+    public void disconnect() {
+        disconnect(new Presence(Presence.Type.unavailable));
+    }
+
+    /**
+     * Closes the connection. A custom unavailable presence is sent to the server, followed
+     * by closing the stream. The XMPPConnection can still be used for connecting to the server
+     * again. A custom unavilable presence is useful for communicating offline presence
+     * information such as "On vacation". Typically, just the status text of the presence
+     * packet is set with online information, but most XMPP servers will deliver the full
+     * presence packet with whatever data is set.<p>
+     * <p/>
+     * This method cleans up all resources used by the connection. Therefore, the roster,
+     * listeners and other stateful objects cannot be re-used by simply calling connect()
+     * on this connection again. This is unlike the behavior during unexpected disconnects
+     * (and subsequent connections). In that case, all state is preserved to allow for
+     * more seamless error recovery.
+     * 
      * @param unavailablePresence the presence packet to send during shutdown.
      */
-    protected void shutdown(Presence unavailablePresence) {
-        // Set presence to offline.
-        if (packetWriter != null) {
-                packetWriter.sendPacket(unavailablePresence);
-        }
+    public abstract void disconnect(Presence unavailablePresence);
 
-        this.setWasAuthenticated(authenticated);
-        authenticated = false;
-
-        if (packetReader != null) {
-                packetReader.shutdown();
-        }
-        if (packetWriter != null) {
-                packetWriter.shutdown();
-        }
-
-        // Wait 150 ms for processes to clean-up, then shutdown.
-        try {
-            Thread.sleep(150);
-        }
-        catch (Exception e) {
-            // Ignore.
-        }
-
-        // Set socketClosed to true. This will cause the PacketReader
-        // and PacketWriter to ignore any Exceptions that are thrown
-        // because of a read/write from/to a closed stream.
-        // It is *important* that this is done before socket.close()!
-        socketClosed = true;
-        try {
-                socket.close();
-        } catch (Exception e) {
-                e.printStackTrace();
-        }
-        // In most cases the close() should be successful, so set
-        // connected to false here.
-        connected = false;
-
-        reader = null;
-        writer = null;
-
-        saslAuthentication.init();
+    /**
+     * Adds a new listener that will be notified when new Connections are created. Note
+     * that newly created connections will not be actually connected to the server.
+     * 
+     * @param connectionCreationListener a listener interested on new connections.
+     */
+    public static void addConnectionCreationListener(
+            ConnectionCreationListener connectionCreationListener) {
+        connectionEstablishedListeners.add(connectionCreationListener);
     }
 
-    public synchronized void disconnect(Presence unavailablePresence) {
-        // If not connected, ignore this request.
-        if (packetReader == null || packetWriter == null) {
+    /**
+     * Removes a listener that was interested in connection creation events.
+     * 
+     * @param connectionCreationListener a listener interested on new connections.
+     */
+    public static void removeConnectionCreationListener(
+            ConnectionCreationListener connectionCreationListener) {
+        connectionEstablishedListeners.remove(connectionCreationListener);
+    }
+
+    /**
+     * Get the collection of listeners that are interested in connection creation events.
+     * 
+     * @return a collection of listeners interested on new connections.
+     */
+    protected static Collection<ConnectionCreationListener> getConnectionCreationListeners() {
+        return Collections.unmodifiableCollection(connectionEstablishedListeners);
+    }
+
+    /**
+     * Adds a connection listener to this connection that will be notified when
+     * the connection closes or fails.
+     * 
+     * @param connectionListener a connection listener.
+     */
+    public void addConnectionListener(ConnectionListener connectionListener) {
+        if (connectionListener == null) {
             return;
         }
-
-        if (!isConnected()) {
-            return;
+        if (!connectionListeners.contains(connectionListener)) {
+            connectionListeners.add(connectionListener);
         }
-
-        shutdown(unavailablePresence);
-
-        wasAuthenticated = false;
     }
 
-    public void sendPacket(Packet packet) {
-        if (!isConnected()) {
-            throw new IllegalStateException("Not connected to server.");
-        }
-        if (packet == null) {
-            throw new NullPointerException("Packet is null.");
-        }
-        packetWriter.sendPacket(packet);
+    /**
+     * Removes a connection listener from this connection.
+     * 
+     * @param connectionListener a connection listener.
+     */
+    public void removeConnectionListener(ConnectionListener connectionListener) {
+        connectionListeners.remove(connectionListener);
     }
 
-    private void connectUsingConfiguration(ConnectionConfiguration config) throws XMPPException {
-        XMPPException exception = null;
-        Iterator<HostAddress> it = config.getHostAddresses().iterator();
-        List<HostAddress> failedAddresses = new LinkedList<HostAddress>();
-        boolean xmppIOError = false;
-        while (it.hasNext()) {
-            exception = null;
-            HostAddress hostAddress = it.next();
-            String host = hostAddress.getFQDN();
-            int port = hostAddress.getPort();
+    /**
+     * Get the collection of listeners that are interested in connection events.
+     * 
+     * @return a collection of listeners interested on connection events.
+     */
+    protected Collection<ConnectionListener> getConnectionListeners() {
+        return connectionListeners;
+    }
+
+    /**
+     * Creates a new packet collector collecting packets that are replies to <code>packet</code>.
+     * Does also send <code>packet</code>. The packet filter for the collector is an
+     * {@link IQReplyFilter}, guaranteeing that packet id and JID in the 'from' address have
+     * expected values.
+     *
+     * @param packet the packet to filter responses from
+     * @return a new packet collector.
+     * @throws NotConnectedException 
+     */
+    public PacketCollector createPacketCollectorAndSend(IQ packet) throws NotConnectedException {
+        PacketFilter packetFilter = new IQReplyFilter(packet, this);
+        // Create the packet collector before sending the packet
+        PacketCollector packetCollector = createPacketCollector(packetFilter);
+        // Now we can send the packet as the collector has been created
+        sendPacket(packet);
+        return packetCollector;
+    }
+
+    /**
+     * Creates a new packet collector for this connection. A packet filter determines
+     * which packets will be accumulated by the collector. A PacketCollector is
+     * more suitable to use than a {@link PacketListener} when you need to wait for
+     * a specific result.
+     * 
+     * @param packetFilter the packet filter to use.
+     * @return a new packet collector.
+     */
+    public PacketCollector createPacketCollector(PacketFilter packetFilter) {
+        PacketCollector collector = new PacketCollector(this, packetFilter);
+        // Add the collector to the list of active collectors.
+        collectors.add(collector);
+        return collector;
+    }
+
+    /**
+     * Remove a packet collector of this connection.
+     * 
+     * @param collector a packet collectors which was created for this connection.
+     */
+    protected void removePacketCollector(PacketCollector collector) {
+        collectors.remove(collector);
+    }
+
+    /**
+     * Get the collection of all packet collectors for this connection.
+     * 
+     * @return a collection of packet collectors for this connection.
+     */
+    protected Collection<PacketCollector> getPacketCollectors() {
+        return collectors;
+    }
+
+    /**
+     * Registers a packet listener with this connection. A packet listener will be invoked only
+     * when an incoming packet is received. A packet filter determines
+     * which packets will be delivered to the listener. If the same packet listener
+     * is added again with a different filter, only the new filter will be used.
+     * 
+     * <p>
+     * NOTE: If you want get a similar callback for outgoing packets, see {@link #addPacketInterceptor(PacketInterceptor, PacketFilter)}.
+     * 
+     * @param packetListener the packet listener to notify of new received packets.
+     * @param packetFilter   the packet filter to use.
+     */
+    public void addPacketListener(PacketListener packetListener, PacketFilter packetFilter) {
+        if (packetListener == null) {
+            throw new NullPointerException("Packet listener is null.");
+        }
+        ListenerWrapper wrapper = new ListenerWrapper(packetListener, packetFilter);
+        recvListeners.put(packetListener, wrapper);
+    }
+
+    /**
+     * Removes a packet listener for received packets from this connection.
+     * 
+     * @param packetListener the packet listener to remove.
+     */
+    public void removePacketListener(PacketListener packetListener) {
+        recvListeners.remove(packetListener);
+    }
+
+    /**
+     * Get a map of all packet listeners for received packets of this connection.
+     * 
+     * @return a map of all packet listeners for received packets.
+     */
+    protected Map<PacketListener, ListenerWrapper> getPacketListeners() {
+        return recvListeners;
+    }
+
+    /**
+     * Registers a packet listener with this connection. The listener will be
+     * notified of every packet that this connection sends. A packet filter determines
+     * which packets will be delivered to the listener. Note that the thread
+     * that writes packets will be used to invoke the listeners. Therefore, each
+     * packet listener should complete all operations quickly or use a different
+     * thread for processing.
+     * 
+     * @param packetListener the packet listener to notify of sent packets.
+     * @param packetFilter   the packet filter to use.
+     */
+    public void addPacketSendingListener(PacketListener packetListener, PacketFilter packetFilter) {
+        if (packetListener == null) {
+            throw new NullPointerException("Packet listener is null.");
+        }
+        ListenerWrapper wrapper = new ListenerWrapper(packetListener, packetFilter);
+        sendListeners.put(packetListener, wrapper);
+    }
+
+    /**
+     * Removes a packet listener for sending packets from this connection.
+     * 
+     * @param packetListener the packet listener to remove.
+     */
+    public void removePacketSendingListener(PacketListener packetListener) {
+        sendListeners.remove(packetListener);
+    }
+
+    /**
+     * Get a map of all packet listeners for sending packets of this connection.
+     * 
+     * @return a map of all packet listeners for sent packets.
+     */
+    protected Map<PacketListener, ListenerWrapper> getPacketSendingListeners() {
+        return sendListeners;
+    }
+
+
+    /**
+     * Process all packet listeners for sending packets.
+     * 
+     * @param packet the packet to process.
+     */
+    private void firePacketSendingListeners(Packet packet) {
+        // Notify the listeners of the new sent packet
+        for (ListenerWrapper listenerWrapper : sendListeners.values()) {
             try {
-                if (config.getSocketFactory() == null) {
-                    this.socket = new Socket(host, port);
-                }
-                else {
-                    this.socket = config.getSocketFactory().createSocket(host, port);
-                }
-            } catch (UnknownHostException uhe) {
-                String errorMessage = "Could not connect to " + host + ":" + port + ".";
-                exception = new XMPPException(errorMessage, new XMPPError(XMPPError.Condition.remote_server_timeout,
-                        errorMessage), uhe);
-            } catch (IOException ioe) {
-                String errorMessage = "XMPPError connecting to " + host + ":" + port + ".";
-                exception = new XMPPException(errorMessage, new XMPPError(XMPPError.Condition.remote_server_error,
-                        errorMessage), ioe);
-                xmppIOError = true;
+                listenerWrapper.notifyListener(packet);
             }
-            if (exception == null) {
-                // We found a host to connect to, break here
-                config.setUsedHostAddress(hostAddress);
+            catch (NotConnectedException e) {
+                LOGGER.log(Level.WARNING, "Got not connected exception, aborting");
                 break;
             }
-            hostAddress.setException(exception);
-            failedAddresses.add(hostAddress);
-            if (!it.hasNext()) {
-                // There are no more host addresses to try
-                // throw an exception and report all tried
-                // HostAddresses in the exception
-                StringBuilder sb = new StringBuilder();
-                for (HostAddress fha : failedAddresses) {
-                    sb.append(fha.getErrorMessage());
-                    sb.append("; ");
-                }
-                XMPPError xmppError;
-                if (xmppIOError) {
-                    xmppError = new XMPPError(XMPPError.Condition.remote_server_error);
-                }
-                else {
-                    xmppError = new XMPPError(XMPPError.Condition.remote_server_timeout);
-                }
-                throw new XMPPException(sb.toString(), xmppError, exception);
-            }
         }
-        socketClosed = false;
-        initConnection();
     }
 
     /**
-     * Initializes the connection by creating a packet reader and writer and opening a
-     * XMPP stream to the server.
+     * Registers a packet interceptor with this connection. The interceptor will be
+     * invoked every time a packet is about to be sent by this connection. Interceptors
+     * may modify the packet to be sent. A packet filter determines which packets
+     * will be delivered to the interceptor.
+     * 
+     * <p>
+     * NOTE: For a similar functionality on incoming packets, see {@link #addPacketListener(PacketListener, PacketFilter)}.
      *
-     * @throws XMPPException if establishing a connection to the server fails.
+     * @param packetInterceptor the packet interceptor to notify of packets about to be sent.
+     * @param packetFilter      the packet filter to use.
      */
-    private void initConnection() throws XMPPException {
-        boolean isFirstInitialization = packetReader == null || packetWriter == null;
-        compressionHandler = null;
-        serverAckdCompression = false;
-
-        // Set the reader and writer instance variables
-        initReaderAndWriter();
-
-        try {
-            if (isFirstInitialization) {
-                packetWriter = new PacketWriter(this);
-                packetReader = new PacketReader(this);
-
-                // If debugging is enabled, we should start the thread that will listen for
-                // all packets and then log them.
-                if (config.isDebuggerEnabled()) {
-                    addPacketListener(debugger.getReaderListener(), null);
-                    if (debugger.getWriterListener() != null) {
-                        addPacketSendingListener(debugger.getWriterListener(), null);
-                    }
-                }
-            }
-            else {
-                packetWriter.init();
-                packetReader.init();
-            }
-
-            // Start the packet writer. This will open a XMPP stream to the server
-            packetWriter.startup();
-            // Start the packet reader. The startup() method will block until we
-            // get an opening stream packet back from server.
-            packetReader.startup();
-
-            // Make note of the fact that we're now connected.
-            connected = true;
-
-            if (isFirstInitialization) {
-                // Notify listeners that a new connection has been established
-                for (ConnectionCreationListener listener : getConnectionCreationListeners()) {
-                    listener.connectionCreated(this);
-                }
-            }
-
+    public void addPacketInterceptor(PacketInterceptor packetInterceptor,
+            PacketFilter packetFilter) {
+        if (packetInterceptor == null) {
+            throw new NullPointerException("Packet interceptor is null.");
         }
-        catch (XMPPException ex) {
-            // An exception occurred in setting up the connection. Make sure we shut down the
-            // readers and writers and close the socket.
+        interceptors.put(packetInterceptor, new InterceptorWrapper(packetInterceptor, packetFilter));
+    }
 
-            if (packetWriter != null) {
-                try {
-                    packetWriter.shutdown();
-                }
-                catch (Throwable ignore) { /* ignore */ }
-                packetWriter = null;
-            }
-            if (packetReader != null) {
-                try {
-                    packetReader.shutdown();
-                }
-                catch (Throwable ignore) { /* ignore */ }
-                packetReader = null;
-            }
-            if (reader != null) {
-                try {
-                    reader.close();
-                }
-                catch (Throwable ignore) { /* ignore */ }
-                reader = null;
-            }
-            if (writer != null) {
-                try {
-                    writer.close();
-                }
-                catch (Throwable ignore) {  /* ignore */}
-                writer = null;
-            }
-            if (socket != null) {
-                try {
-                    socket.close();
-                }
-                catch (Exception e) { /* ignore */ }
-                socket = null;
-            }
-            this.setWasAuthenticated(authenticated);
-            authenticated = false;
-            connected = false;
+    /**
+     * Removes a packet interceptor.
+     *
+     * @param packetInterceptor the packet interceptor to remove.
+     */
+    public void removePacketInterceptor(PacketInterceptor packetInterceptor) {
+        interceptors.remove(packetInterceptor);
+    }
 
-            throw ex;        // Everything stoppped. Now throw the exception.
+    /**
+     * Get a map of all packet interceptors for sending packets of this connection.
+     * 
+     * @return a map of all packet interceptors for sending packets.
+     */
+    protected Map<PacketInterceptor, InterceptorWrapper> getPacketInterceptors() {
+        return interceptors;
+    }
+
+    /**
+     * Process interceptors. Interceptors may modify the packet that is about to be sent.
+     * Since the thread that requested to send the packet will invoke all interceptors, it
+     * is important that interceptors perform their work as soon as possible so that the
+     * thread does not remain blocked for a long period.
+     * 
+     * @param packet the packet that is going to be sent to the server
+     */
+    private void firePacketInterceptors(Packet packet) {
+        if (packet != null) {
+            for (InterceptorWrapper interceptorWrapper : interceptors.values()) {
+                interceptorWrapper.notifyListener(packet);
+            }
         }
     }
 
-    private void initReaderAndWriter() throws XMPPException {
-        try {
-            if (compressionHandler == null) {
-                reader =
-                        new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-                writer = new BufferedWriter(
-                        new OutputStreamWriter(socket.getOutputStream(), "UTF-8"));
-            }
-            else {
-                try {
-                    OutputStream os = compressionHandler.getOutputStream(socket.getOutputStream());
-                    writer = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-
-                    InputStream is = compressionHandler.getInputStream(socket.getInputStream());
-                    reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
-                }
-                catch (Exception e) {
-                    e.printStackTrace();
-                    compressionHandler = null;
-                    reader = new BufferedReader(
-                            new InputStreamReader(socket.getInputStream(), "UTF-8"));
-                    writer = new BufferedWriter(
-                            new OutputStreamWriter(socket.getOutputStream(), "UTF-8"));
-                }
-            }
+    /**
+     * Initialize the {@link #debugger}. You can specify a customized {@link SmackDebugger}
+     * by setup the system property <code>smack.debuggerClass</code> to the implementation.
+     * 
+     * @throws IllegalStateException if the reader or writer isn't yet initialized.
+     * @throws IllegalArgumentException if the SmackDebugger can't be loaded.
+     */
+    protected void initDebugger() {
+        if (reader == null || writer == null) {
+            throw new NullPointerException("Reader or writer isn't initialized.");
         }
-        catch (IOException ioe) {
-            throw new XMPPException(
-                    "XMPPError establishing connection with server.",
-                    new XMPPError(XMPPError.Condition.remote_server_error,
-                            "XMPPError establishing connection with server."),
-                    ioe);
-        }
-
         // If debugging is enabled, we open a window and write out all network traffic.
-        initDebugger();
-    }
-
-    /***********************************************
-     * TLS code below
-     **********************************************/
-
-    /**
-     * Returns true if the connection to the server has successfully negotiated TLS. Once TLS
-     * has been negotiatied the connection has been secured.
-     *
-     * @return true if the connection to the server has successfully negotiated TLS.
-     */
-    public boolean isUsingTLS() {
-        return usingTLS;
-    }
-
-    /**
-     * Notification message saying that the server supports TLS so confirm the server that we
-     * want to secure the connection.
-     *
-     * @param required true when the server indicates that TLS is required.
-     */
-    void startTLSReceived(boolean required) {
-        if (required && config.getSecurityMode() ==
-                ConnectionConfiguration.SecurityMode.disabled) {
-            notifyConnectionError(new IllegalStateException(
-                    "TLS required by server but not allowed by connection configuration"));
-            return;
-        }
-
-        if (config.getSecurityMode() == ConnectionConfiguration.SecurityMode.disabled) {
-            // Do not secure the connection using TLS since TLS was disabled
-            return;
-        }
-        try {
-            writer.write("<starttls xmlns=\"urn:ietf:params:xml:ns:xmpp-tls\"/>");
-            writer.flush();
-        }
-        catch (IOException e) {
-            notifyConnectionError(e);
-        }
-    }
-
-    /**
-     * The server has indicated that TLS negotiation can start. We now need to secure the
-     * existing plain connection and perform a handshake. This method won't return until the
-     * connection has finished the handshake or an error occured while securing the connection.
-     *
-     * @throws Exception if an exception occurs.
-     */
-    void proceedTLSReceived() throws Exception {
-        SSLContext context = this.config.getCustomSSLContext();
-        KeyStore ks = null;
-        KeyManager[] kms = null;
-        PasswordCallback pcb = null;
-
-        if(config.getCallbackHandler() == null) {
-           ks = null;
-        } else if (context == null) {
-            if(config.getKeystoreType().equals("NONE")) {
-                ks = null;
-                pcb = null;
-            }
-            else if(config.getKeystoreType().equals("PKCS11")) {
+        if (config.isDebuggerEnabled()) {
+            if (debugger == null) {
+                // Detect the debugger class to use.
+                String className = null;
+                // Use try block since we may not have permission to get a system
+                // property (for example, when an applet).
                 try {
-                    Constructor<?> c = Class.forName("sun.security.pkcs11.SunPKCS11").getConstructor(InputStream.class);
-                    String pkcs11Config = "name = SmartCard\nlibrary = "+config.getPKCS11Library();
-                    ByteArrayInputStream config = new ByteArrayInputStream(pkcs11Config.getBytes());
-                    Provider p = (Provider)c.newInstance(config);
-                    Security.addProvider(p);
-                    ks = KeyStore.getInstance("PKCS11",p);
-                    pcb = new PasswordCallback("PKCS11 Password: ",false);
-                    this.config.getCallbackHandler().handle(new Callback[]{pcb});
-                    ks.load(null,pcb.getPassword());
+                    className = System.getProperty("smack.debuggerClass");
                 }
-                catch (Exception e) {
-                    ks = null;
-                    pcb = null;
-                }
-            }
-            else if(config.getKeystoreType().equals("Apple")) {
-                ks = KeyStore.getInstance("KeychainStore","Apple");
-                ks.load(null,null);
-                //pcb = new PasswordCallback("Apple Keychain",false);
-                //pcb.setPassword(null);
-            }
-            else {
-                ks = KeyStore.getInstance(config.getKeystoreType());
-                try {
-                    pcb = new PasswordCallback("Keystore Password: ",false);
-                    config.getCallbackHandler().handle(new Callback[]{pcb});
-                    ks.load(new FileInputStream(config.getKeystorePath()), pcb.getPassword());
-                }
-                catch(Exception e) {
-                    ks = null;
-                    pcb = null;
-                }
-            }
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-            try {
-                if(pcb == null) {
-                    kmf.init(ks,null);
-                } else {
-                    kmf.init(ks,pcb.getPassword());
-                    pcb.clearPassword();
-                }
-                kms = kmf.getKeyManagers();
-            } catch (NullPointerException npe) {
-                kms = null;
-            }
-        }
-
-        // Verify certificate presented by the server
-        if (context == null) {
-            context = SSLContext.getInstance("TLS");
-            context.init(kms, null, new java.security.SecureRandom());
-        }
-        Socket plain = socket;
-        // Secure the plain connection
-        socket = context.getSocketFactory().createSocket(plain,
-                plain.getInetAddress().getHostAddress(), plain.getPort(), true);
-        socket.setSoTimeout(0);
-        socket.setKeepAlive(true);
-        // Initialize the reader and writer with the new secured version
-        initReaderAndWriter();
-        // Proceed to do the handshake
-        ((SSLSocket) socket).startHandshake();
-        //if (((SSLSocket) socket).getWantClientAuth()) {
-        //    System.err.println("Connection wants client auth");
-        //}
-        //else if (((SSLSocket) socket).getNeedClientAuth()) {
-        //    System.err.println("Connection needs client auth");
-        //}
-        //else {
-        //    System.err.println("Connection does not require client auth");
-       // }
-        // Set that TLS was successful
-        usingTLS = true;
-
-        // Set the new  writer to use
-        packetWriter.setWriter(writer);
-        // Send a new opening stream to the server
-        packetWriter.openStream();
-    }
-
-    /**
-     * Sets the available stream compression methods offered by the server.
-     *
-     * @param methods compression methods offered by the server.
-     */
-    void setAvailableCompressionMethods(Collection<String> methods) {
-        compressionMethods = methods;
-    }
-
-    /**
-     * Returns the compression handler that can be used for one compression methods offered by the server.
-     * 
-     * @return a instance of XMPPInputOutputStream or null if no suitable instance was found
-     * 
-     */
-    private XMPPInputOutputStream maybeGetCompressionHandler() {
-        if (compressionMethods != null) {
-            for (XMPPInputOutputStream handler : compressionHandlers) {
-                if (!handler.isSupported())
-                    continue;
-
-                String method = handler.getCompressionMethod();
-                if (compressionMethods.contains(method))
-                    return handler;
-            }
-        }
-        return null;
-    }
-
-    public boolean isUsingCompression() {
-        return compressionHandler != null && serverAckdCompression;
-    }
-
-    /**
-     * Starts using stream compression that will compress network traffic. Traffic can be
-     * reduced up to 90%. Therefore, stream compression is ideal when using a slow speed network
-     * connection. However, the server and the client will need to use more CPU time in order to
-     * un/compress network data so under high load the server performance might be affected.<p>
-     * <p/>
-     * Stream compression has to have been previously offered by the server. Currently only the
-     * zlib method is supported by the client. Stream compression negotiation has to be done
-     * before authentication took place.<p>
-     * <p/>
-     * Note: to use stream compression the smackx.jar file has to be present in the classpath.
-     *
-     * @return true if stream compression negotiation was successful.
-     */
-    private boolean useCompression() {
-        // If stream compression was offered by the server and we want to use
-        // compression then send compression request to the server
-        if (authenticated) {
-            throw new IllegalStateException("Compression should be negotiated before authentication.");
-        }
-
-        if ((compressionHandler = maybeGetCompressionHandler()) != null) {
-            requestStreamCompression(compressionHandler.getCompressionMethod());
-            // Wait until compression is being used or a timeout happened
-            synchronized (this) {
-                try {
-                    this.wait(SmackConfiguration.getDefaultPacketReplyTimeout() * 5);
-                }
-                catch (InterruptedException e) {
+                catch (Throwable t) {
                     // Ignore.
                 }
-            }
-            return isUsingCompression();
-        }
-        return false;
-    }
-
-    /**
-     * Request the server that we want to start using stream compression. When using TLS
-     * then negotiation of stream compression can only happen after TLS was negotiated. If TLS
-     * compression is being used the stream compression should not be used.
-     */
-    private void requestStreamCompression(String method) {
-        try {
-            writer.write("<compress xmlns='http://jabber.org/protocol/compress'>");
-            writer.write("<method>" + method + "</method></compress>");
-            writer.flush();
-        }
-        catch (IOException e) {
-            notifyConnectionError(e);
-        }
-    }
-
-    /**
-     * Start using stream compression since the server has acknowledged stream compression.
-     *
-     * @throws Exception if there is an exception starting stream compression.
-     */
-    void startStreamCompression() throws Exception {
-        serverAckdCompression = true;
-        // Initialize the reader and writer with the new secured version
-        initReaderAndWriter();
-
-        // Set the new  writer to use
-        packetWriter.setWriter(writer);
-        // Send a new opening stream to the server
-        packetWriter.openStream();
-        // Notify that compression is being used
-        synchronized (this) {
-            this.notify();
-        }
-    }
-
-    /**
-     * Notifies the XMPP connection that stream compression was denied so that
-     * the connection process can proceed.
-     */
-    void streamCompressionDenied() {
-        synchronized (this) {
-            this.notify();
-        }
-    }
-
-    /**
-     * Establishes a connection to the XMPP server and performs an automatic login
-     * only if the previous connection state was logged (authenticated). It basically
-     * creates and maintains a socket connection to the server.<p>
-     * <p/>
-     * Listeners will be preserved from a previous connection if the reconnection
-     * occurs after an abrupt termination.
-     *
-     * @throws XMPPException if an error occurs while trying to establish the connection.
-     *      Two possible errors can occur which will be wrapped by an XMPPException --
-     *      UnknownHostException (XMPP error code 504), and IOException (XMPP error code
-     *      502). The error codes and wrapped exceptions can be used to present more
-     *      appropriate error messages to end-users.
-     */
-    public void connect() throws XMPPException {
-        // Establishes the connection, readers and writers
-        connectUsingConfiguration(config);
-        // Automatically makes the login if the user was previously connected successfully
-        // to the server and the connection was terminated abruptly
-        if (connected && wasAuthenticated) {
-            // Make the login
-            if (isAnonymous()) {
-                // Make the anonymous login
-                loginAnonymously();
+                Class<?> debuggerClass = null;
+                if (className != null) {
+                    try {
+                        debuggerClass = Class.forName(className);
+                    }
+                    catch (Exception e) {
+                        LOGGER.warning("Unabled to instantiate debugger class " + className);
+                    }
+                }
+                if (debuggerClass == null) {
+                    try {
+                        debuggerClass =
+                                Class.forName("org.jivesoftware.smackx.debugger.EnhancedDebugger");
+                    }
+                    catch (Exception ex) {
+                        try {
+                            debuggerClass =
+                                    Class.forName("org.jivesoftware.smack.debugger.LiteDebugger");
+                        }
+                        catch (Exception ex2) {
+                            LOGGER.warning("Unabled to instantiate either Smack debugger class");
+                        }
+                    }
+                }
+                // Create a new debugger instance. If an exception occurs then disable the debugging
+                // option
+                try {
+                    Constructor<?> constructor = debuggerClass
+                            .getConstructor(XMPPConnection.class, Writer.class, Reader.class);
+                    debugger = (SmackDebugger) constructor.newInstance(this, writer, reader);
+                    reader = debugger.getReader();
+                    writer = debugger.getWriter();
+                }
+                catch (Exception e) {
+                    throw new IllegalArgumentException("Can't initialize the configured debugger!", e);
+                }
             }
             else {
-				try {
-					Thread.sleep(250);
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-				login(config.getUsername(), config.getPassword(), config.getResource());
-				notifyReconnection();
-			}
+                // Obtain new reader and writer from the existing debugger
+                reader = debugger.newConnectionReader(reader);
+                writer = debugger.newConnectionWriter(writer);
+            }
         }
     }
 
     /**
-     * Sets whether the connection has already logged in the server.
-     *
-     * @param wasAuthenticated true if the connection has already been authenticated.
+     * Set the servers Entity Caps node
+     * 
+     * XMPPConnection holds this information in order to avoid a dependency to
+     * smackx where EntityCapsManager lives from smack.
+     * 
+     * @param node
      */
-    private void setWasAuthenticated(boolean wasAuthenticated) {
-        if (!this.wasAuthenticated) {
-            this.wasAuthenticated = wasAuthenticated;
-        }
+    protected void setServiceCapsNode(String node) {
+        serviceCapsNode = node;
     }
 
     /**
-     * Sends out a notification that there was an error with the connection
-     * and closes the connection. Also prints the stack trace of the given exception
-     *
-     * @param e the exception that causes the connection close event.
+     * Retrieve the servers Entity Caps node
+     * 
+     * XMPPConnection holds this information in order to avoid a dependency to
+     * smackx where EntityCapsManager lives from smack.
+     * 
+     * @return the servers entity caps node
      */
-    synchronized void notifyConnectionError(Exception e) {
-        // Listeners were already notified of the exception, return right here.
-        if ((packetReader == null || packetReader.done) &&
-                (packetWriter == null || packetWriter.done)) return;
+    public String getServiceCapsNode() {
+        return serviceCapsNode;
+    }
 
-        if (packetReader != null)
-            packetReader.done = true;
-        if (packetWriter != null)
-            packetWriter.done = true;
-        // Closes the connection temporary. A reconnection is possible
-        shutdown(new Presence(Presence.Type.unavailable));
-        // Notify connection listeners of the error.
+    /**
+     * Returns true if the server supports roster versioning as defined in XEP-0237.
+     *
+     * @return true if the server supports roster versioning
+     */
+    public boolean isRosterVersioningSupported() {
+        return rosterVersioningSupported;
+    }
+
+    /**
+     * Indicates that the server supports roster versioning as defined in XEP-0237.
+     */
+    protected void setRosterVersioningSupported() {
+        rosterVersioningSupported = true;
+    }
+
+    /**
+     * Returns the current value of the reply timeout in milliseconds for request for this
+     * XMPPConnection instance.
+     *
+     * @return the packet reply timeout in milliseconds
+     */
+    public long getPacketReplyTimeout() {
+        return packetReplyTimeout;
+    }
+
+    /**
+     * Set the packet reply timeout in milliseconds. In most cases, Smack will throw a
+     * {@link NoResponseException} if no reply to a request was received within the timeout period.
+     *
+     * @param timeout the packet reply timeout in milliseconds
+     */
+    public void setPacketReplyTimeout(long timeout) {
+        packetReplyTimeout = timeout;
+    }
+
+    /**
+     * Processes a packet after it's been fully parsed by looping through the installed
+     * packet collectors and listeners and letting them examine the packet to see if
+     * they are a match with the filter.
+     *
+     * @param packet the packet to process.
+     */
+    protected void processPacket(Packet packet) {
+        if (packet == null) {
+            return;
+        }
+
+        // Loop through all collectors and notify the appropriate ones.
+        for (PacketCollector collector: getPacketCollectors()) {
+            collector.processPacket(packet);
+        }
+
+        // Deliver the incoming packet to listeners.
+        listenerExecutor.submit(new ListenerNotification(packet));
+    }
+
+    /**
+     * A runnable to notify all listeners of a packet.
+     */
+    private class ListenerNotification implements Runnable {
+
+        private Packet packet;
+
+        public ListenerNotification(Packet packet) {
+            this.packet = packet;
+        }
+
+        public void run() {
+            for (ListenerWrapper listenerWrapper : recvListeners.values()) {
+                try {
+                    listenerWrapper.notifyListener(packet);
+                } catch(NotConnectedException e) {
+                    LOGGER.log(Level.WARNING, "Got not connected exception, aborting", e);
+                    break;
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Exception in packet listener", e);
+                }
+            }
+        }
+    }
+
+    void callConnectionConnectedListener() {
+        for (ConnectionListener listener : getConnectionListeners()) {
+            listener.connected(this);
+        }
+    }
+
+    void callConnectionAuthenticatedListener() {
+        for (ConnectionListener listener : getConnectionListeners()) {
+            listener.connected(this);
+        }
+    }
+
+    void callConnectionClosedListener() {
+        for (ConnectionListener listener : getConnectionListeners()) {
+            try {
+                listener.connectionClosed();
+            }
+            catch (Exception e) {
+                // Catch and print any exception so we can recover
+                // from a faulty listener and finish the shutdown process
+                LOGGER.log(Level.SEVERE, "Error in listener while closing connection", e);
+            }
+        }
+    }
+
+    void callConnectionClosedOnErrorListener(Exception e) {
         for (ConnectionListener listener : getConnectionListeners()) {
             try {
                 listener.connectionClosedOnError(e);
@@ -1015,25 +1049,136 @@ public class XMPPConnection extends Connection {
             catch (Exception e2) {
                 // Catch and print any exception so we can recover
                 // from a faulty listener
-                e2.printStackTrace();
+                LOGGER.log(Level.SEVERE, "Error in listener while closing connection", e2);
             }
         }
     }
 
     /**
-     * Sends a notification indicating that the connection was reconnected successfully.
+     * A wrapper class to associate a packet filter with a listener.
      */
-    protected void notifyReconnection() {
-        // Notify connection listeners of the reconnection.
-        for (ConnectionListener listener : getConnectionListeners()) {
-            try {
-                listener.reconnectionSuccessful();
-            }
-            catch (Exception e) {
-                // Catch and print any exception so we can recover
-                // from a faulty listener
-                e.printStackTrace();
+    protected static class ListenerWrapper {
+
+        private PacketListener packetListener;
+        private PacketFilter packetFilter;
+
+        /**
+         * Create a class which associates a packet filter with a listener.
+         * 
+         * @param packetListener the packet listener.
+         * @param packetFilter the associated filter or null if it listen for all packets.
+         */
+        public ListenerWrapper(PacketListener packetListener, PacketFilter packetFilter) {
+            this.packetListener = packetListener;
+            this.packetFilter = packetFilter;
+        }
+
+        /**
+         * Notify and process the packet listener if the filter matches the packet.
+         * 
+         * @param packet the packet which was sent or received.
+         * @throws NotConnectedException 
+         */
+        public void notifyListener(Packet packet) throws NotConnectedException {
+            if (packetFilter == null || packetFilter.accept(packet)) {
+                packetListener.processPacket(packet);
             }
         }
+    }
+
+    /**
+     * A wrapper class to associate a packet filter with an interceptor.
+     */
+    protected static class InterceptorWrapper {
+
+        private PacketInterceptor packetInterceptor;
+        private PacketFilter packetFilter;
+
+        /**
+         * Create a class which associates a packet filter with an interceptor.
+         * 
+         * @param packetInterceptor the interceptor.
+         * @param packetFilter the associated filter or null if it intercepts all packets.
+         */
+        public InterceptorWrapper(PacketInterceptor packetInterceptor, PacketFilter packetFilter) {
+            this.packetInterceptor = packetInterceptor;
+            this.packetFilter = packetFilter;
+        }
+
+        public boolean equals(Object object) {
+            if (object == null) {
+                return false;
+            }
+            if (object instanceof InterceptorWrapper) {
+                return ((InterceptorWrapper) object).packetInterceptor
+                        .equals(this.packetInterceptor);
+            }
+            else if (object instanceof PacketInterceptor) {
+                return object.equals(this.packetInterceptor);
+            }
+            return false;
+        }
+
+        /**
+         * Notify and process the packet interceptor if the filter matches the packet.
+         * 
+         * @param packet the packet which will be sent.
+         */
+        public void notifyListener(Packet packet) {
+            if (packetFilter == null || packetFilter.accept(packet)) {
+                packetInterceptor.interceptPacket(packet);
+            }
+        }
+    }
+
+    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+        return executorService.schedule(command, delay, unit);
+    }
+
+    /**
+     * Get the connection counter of this XMPPConnection instance. Those can be used as ID to
+     * identify the connection, but beware that the ID may not be unique if you create more then
+     * <tt>2*Integer.MAX_VALUE</tt> instances as the counter could wrap.
+     *
+     * @return the connection counter of this XMPPConnection
+     */
+    public int getConnectionCounter() {
+        return connectionCounterValue;
+    }
+
+    public static enum FromMode {
+        /**
+         * Leave the 'from' attribute unchanged. This is the behavior of Smack < 4.0
+         */
+        UNCHANGED,
+        /**
+         * Omit the 'from' attribute. According to RFC 6120 8.1.2.1 1. XMPP servers "MUST (...)
+         * override the 'from' attribute specified by the client". It is therefore safe to specify
+         * FromMode.OMITTED here.
+         */
+        OMITTED,
+        /**
+         * Set the from to the clients full JID. This is usually not required.
+         */
+        USER
+    }
+
+    /**
+     * Set the FromMode for this connection instance. Defines how the 'from' attribute of outgoing
+     * stanzas should be populated by Smack.
+     * 
+     * @param fromMode
+     */
+    public void setFromMode(FromMode fromMode) {
+        this.fromMode = fromMode;
+    }
+
+    /**
+     * Get the currently active FromMode.
+     *
+     * @return the currently active {@link FromMode}
+     */
+    public FromMode getFromMode() {
+        return this.fromMode;
     }
 }

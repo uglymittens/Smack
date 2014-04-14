@@ -24,9 +24,9 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.AndFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
@@ -58,7 +58,7 @@ import org.jivesoftware.smackx.bytestreams.ibb.packet.Open;
 public class InBandBytestreamSession implements BytestreamSession {
 
     /* XMPP connection */
-    private final Connection connection;
+    private final XMPPConnection connection;
 
     /* the In-Band Bytestream open request for this session */
     private final Open byteStreamRequest;
@@ -89,7 +89,7 @@ public class InBandBytestreamSession implements BytestreamSession {
      * @param byteStreamRequest the In-Band Bytestream open request for this session
      * @param remoteJID JID of the remote peer
      */
-    protected InBandBytestreamSession(Connection connection, Open byteStreamRequest,
+    protected InBandBytestreamSession(XMPPConnection connection, Open byteStreamRequest,
                     String remoteJID) {
         this.connection = connection;
         this.byteStreamRequest = byteStreamRequest;
@@ -160,8 +160,9 @@ public class InBandBytestreamSession implements BytestreamSession {
      * This method is invoked if a request to close the In-Band Bytestream has been received.
      * 
      * @param closeRequest the close request from the remote peer
+     * @throws NotConnectedException 
      */
-    protected void closeByPeer(Close closeRequest) {
+    protected void closeByPeer(Close closeRequest) throws NotConnectedException {
 
         /*
          * close streams without flushing them, because stream is already considered closed on the
@@ -211,8 +212,12 @@ public class InBandBytestreamSession implements BytestreamSession {
             try {
                 connection.createPacketCollectorAndSend(close).nextResultOrThrow();
             }
-            catch (XMPPException e) {
-                throw new IOException("Error while closing stream: " + e.getMessage());
+            catch (Exception e) {
+                // Sadly we are unable to use the IOException(Throwable) constructor because this
+                // constructor is only supported from Android API 9 on.
+                IOException ioException = new IOException();
+                ioException.initCause(e);
+                throw ioException;
             }
 
             this.inputStream.cleanup();
@@ -442,7 +447,7 @@ public class InBandBytestreamSession implements BytestreamSession {
 
                 private long lastSequence = -1;
 
-                public void processPacket(Packet packet) {
+                public void processPacket(Packet packet) throws NotConnectedException {
                     // get data packet extension
                     DataPacketExtension data = (DataPacketExtension) packet.getExtension(
                                     DataPacketExtension.ELEMENT_NAME,
@@ -604,8 +609,9 @@ public class InBandBytestreamSession implements BytestreamSession {
          * 
          * @param data the data packet
          * @throws IOException if an I/O error occurred while sending or if the stream is closed
+         * @throws NotConnectedException 
          */
-        protected abstract void writeToXML(DataPacketExtension data) throws IOException;
+        protected abstract void writeToXML(DataPacketExtension data) throws IOException, NotConnectedException;
 
         public synchronized void write(int b) throws IOException {
             if (this.isClosed) {
@@ -706,7 +712,14 @@ public class InBandBytestreamSession implements BytestreamSession {
                             this.seq, enc);
 
             // write to XMPP stream
-            writeToXML(data);
+            try {
+                writeToXML(data);
+            }
+            catch (NotConnectedException e) {
+                IOException ioException = new IOException();
+                ioException.initCause(e);
+                throw ioException;
+            }
 
             // reset buffer pointer
             bufferPointer = 0;
@@ -764,11 +777,15 @@ public class InBandBytestreamSession implements BytestreamSession {
             try {
                 connection.createPacketCollectorAndSend(iq).nextResultOrThrow();
             }
-            catch (XMPPException e) {
+            catch (Exception e) {
                 // close session unless it is already closed
                 if (!this.isClosed) {
                     InBandBytestreamSession.this.close();
-                    throw new IOException("Error while sending Data: " + e.getMessage());
+                    // Sadly we are unable to use the IOException(Throwable) constructor because this
+                    // constructor is only supported from Android API 9 on.
+                    IOException ioException = new IOException();
+                    ioException.initCause(e);
+                    throw ioException;
                 }
             }
 
@@ -783,7 +800,7 @@ public class InBandBytestreamSession implements BytestreamSession {
     private class MessageIBBOutputStream extends IBBOutputStream {
 
         @Override
-        protected synchronized void writeToXML(DataPacketExtension data) {
+        protected synchronized void writeToXML(DataPacketExtension data) throws NotConnectedException {
             // create message stanza containing data packet
             Message message = new Message(remoteJID);
             message.addExtension(data);

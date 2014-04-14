@@ -14,10 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smackx.disco;
 
-import org.jivesoftware.smack.*;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.ConnectionCreationListener;
+import org.jivesoftware.smack.Manager;
+import org.jivesoftware.smack.PacketListener;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.IQ;
@@ -30,8 +35,14 @@ import org.jivesoftware.smackx.disco.packet.DiscoverItems;
 import org.jivesoftware.smackx.disco.packet.DiscoverInfo.Identity;
 import org.jivesoftware.smackx.xdata.packet.DataForm;
 
-import java.lang.ref.WeakReference;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -45,7 +56,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 
  * @author Gaston Dombiak
  */
-public class ServiceDiscoveryManager {
+public class ServiceDiscoveryManager extends Manager {
 
     private static final String DEFAULT_IDENTITY_NAME = "Smack";
     private static final String DEFAULT_IDENTITY_CATEGORY = "client";
@@ -58,10 +69,9 @@ public class ServiceDiscoveryManager {
 
     private EntityCapsManager capsManager;
 
-    private static Map<Connection, ServiceDiscoveryManager> instances =
-            Collections.synchronizedMap(new WeakHashMap<Connection, ServiceDiscoveryManager>());
+    private static Map<XMPPConnection, ServiceDiscoveryManager> instances =
+            Collections.synchronizedMap(new WeakHashMap<XMPPConnection, ServiceDiscoveryManager>());
 
-    private WeakReference<Connection> connection;
     private final Set<String> features = new HashSet<String>();
     private DataForm extendedInfo = null;
     private Map<String, NodeInformationProvider> nodeInformationProviders =
@@ -69,8 +79,8 @@ public class ServiceDiscoveryManager {
 
     // Create a new ServiceDiscoveryManager on every established connection
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 getInstanceFor(connection);
             }
         });
@@ -87,15 +97,14 @@ public class ServiceDiscoveryManager {
     }
 
     /**
-     * Creates a new ServiceDiscoveryManager for a given Connection. This means that the 
+     * Creates a new ServiceDiscoveryManager for a given XMPPConnection. This means that the 
      * service manager will respond to any service discovery request that the connection may
      * receive. 
      * 
      * @param connection the connection to which a ServiceDiscoveryManager is going to be created.
      */
-    private ServiceDiscoveryManager(Connection connection) {
-        this.connection = new WeakReference<Connection>(connection);
-
+    private ServiceDiscoveryManager(XMPPConnection connection) {
+        super(connection);
         // Register the new instance and associate it with the connection 
         instances.put(connection, this);
 
@@ -105,8 +114,8 @@ public class ServiceDiscoveryManager {
         // Listen for disco#items requests and answer with an empty result        
         PacketFilter packetFilter = new PacketTypeFilter(DiscoverItems.class);
         PacketListener packetListener = new PacketListener() {
-            public void processPacket(Packet packet) {
-                Connection connection = ServiceDiscoveryManager.this.connection.get();
+            public void processPacket(Packet packet) throws NotConnectedException {
+                XMPPConnection connection = connection();
                 if (connection == null) return;
                 DiscoverItems discoverItems = (DiscoverItems) packet;
                 // Send back the items defined in the client if the request is of type GET
@@ -142,8 +151,8 @@ public class ServiceDiscoveryManager {
         // To add a new feature as supported use the #addFeature message        
         packetFilter = new PacketTypeFilter(DiscoverInfo.class);
         packetListener = new PacketListener() {
-            public void processPacket(Packet packet) {
-                Connection connection = ServiceDiscoveryManager.this.connection.get();
+            public void processPacket(Packet packet) throws NotConnectedException {
+                XMPPConnection connection = connection();
                 if (connection == null) return;
                 DiscoverInfo discoverInfo = (DiscoverInfo) packet;
                 // Answer the client's supported features if the request is of the GET type
@@ -210,6 +219,26 @@ public class ServiceDiscoveryManager {
     }
 
     /**
+     * Sets the default identity the client will report.
+     *
+     * @param identity
+     */
+    public void setIdentity(Identity identity) {
+        if (identity == null) throw new IllegalArgumentException("Identity can not be null");
+        this.identity = identity;
+        renewEntityCapsVersion();
+    }
+
+    /**
+     * Return the default identity of the client.
+     *
+     * @return the default identity.
+     */
+    public Identity getIdentity() {
+        return identity;
+    }
+
+    /**
      * Returns the type of client that will be returned when asked for the client identity in a 
      * disco request. The valid types are defined by the category client. Follow this link to learn 
      * the possible types: <a href="http://xmpp.org/registrar/disco-categories.html#client">Jabber::Registrar</a>.
@@ -222,21 +251,7 @@ public class ServiceDiscoveryManager {
     }
 
     /**
-     * Sets the type of client that will be returned when asked for the client identity in a 
-     * disco request. The valid types are defined by the category client. Follow this link to learn 
-     * the possible types: <a href="http://xmpp.org/registrar/disco-categories.html#client">Jabber::Registrar</a>.
-     * 
-     * @param type the type of client that will be returned when asked for the client identity in a 
-     *          disco request.
-     */
-    @SuppressWarnings("deprecation")
-    public void setIdentityType(String type) {
-        identity.setType(type);
-        renewEntityCapsVersion();
-    }
-
-    /**
-     * Add an identity to the client.
+     * Add an further identity to the client.
      * 
      * @param identity
      */
@@ -262,7 +277,7 @@ public class ServiceDiscoveryManager {
     /**
      * Returns all identities of this client as unmodifiable Collection
      * 
-     * @return
+     * @return all identies as set
      */
     public Set<DiscoverInfo.Identity> getIdentities() {
         Set<Identity> res = new HashSet<Identity>(identities);
@@ -272,12 +287,12 @@ public class ServiceDiscoveryManager {
     }
 
     /**
-     * Returns the ServiceDiscoveryManager instance associated with a given Connection.
+     * Returns the ServiceDiscoveryManager instance associated with a given XMPPConnection.
      * 
      * @param connection the connection used to look for the proper ServiceDiscoveryManager.
-     * @return the ServiceDiscoveryManager associated with a given Connection.
+     * @return the ServiceDiscoveryManager associated with a given XMPPConnection.
      */
-    public static synchronized ServiceDiscoveryManager getInstanceFor(Connection connection) {
+    public static synchronized ServiceDiscoveryManager getInstanceFor(XMPPConnection connection) {
         ServiceDiscoveryManager sdm = instances.get(connection);
         if (sdm == null) {
             sdm = new ServiceDiscoveryManager(connection);
@@ -298,8 +313,8 @@ public class ServiceDiscoveryManager {
 
         // Add the registered features to the response
         synchronized (features) {
-            for (Iterator<String> it = getFeatures(); it.hasNext();) {
-                response.addFeature(it.next());
+            for (String feature : getFeatures()) {
+                response.addFeature(feature);
             }
             response.addExtension(extendedInfo);
         }
@@ -357,11 +372,11 @@ public class ServiceDiscoveryManager {
     /**
      * Returns the supported features by this XMPP entity.
      * 
-     * @return an Iterator on the supported features by this XMPP entity.
+     * @return a List of the supported features by this XMPP entity.
      */
-    public Iterator<String> getFeatures() {
+    public List<String> getFeatures() {
         synchronized (features) {
-            return Collections.unmodifiableList(new ArrayList<String>(features)).iterator();
+            return Collections.unmodifiableList(new ArrayList<String>(features));
         }
     }
 
@@ -445,7 +460,7 @@ public class ServiceDiscoveryManager {
      * Returns the data form that is set as extended information for this Service Discovery instance (XEP-0128)
      * 
      * @see <a href="http://xmpp.org/extensions/xep-0128.html">XEP-128: Service Discovery Extensions</a>
-     * @return
+     * @return the data form
      */
     public DataForm getExtendedInfo() {
         return extendedInfo;
@@ -455,7 +470,7 @@ public class ServiceDiscoveryManager {
      * Returns the data form as List of PacketExtensions, or null if no data form is set.
      * This representation is needed by some classes (e.g. EntityCapsManager, NodeInformationProvider)
      * 
-     * @return
+     * @return the data form as List of PacketExtensions
      */
     public List<PacketExtension> getExtendedInfoAsList() {
         List<PacketExtension> res = null;
@@ -484,9 +499,11 @@ public class ServiceDiscoveryManager {
      * 
      * @param entityID the address of the XMPP entity or null.
      * @return the discovered information.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public DiscoverInfo discoverInfo(String entityID) throws XMPPException {
+    public DiscoverInfo discoverInfo(String entityID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         if (entityID == null)
             return discoverInfo(null, null);
 
@@ -527,19 +544,18 @@ public class ServiceDiscoveryManager {
      * @param entityID the address of the XMPP entity.
      * @param node the optional attribute that supplements the 'jid' attribute.
      * @return the discovered information.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException if the operation failed for some reason.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public DiscoverInfo discoverInfo(String entityID, String node) throws XMPPException {
-        Connection connection = ServiceDiscoveryManager.this.connection.get();
-        if (connection == null) throw new XMPPException("Connection instance already gc'ed");
-
+    public DiscoverInfo discoverInfo(String entityID, String node) throws NoResponseException, XMPPErrorException, NotConnectedException {
         // Discover the entity's info
         DiscoverInfo disco = new DiscoverInfo();
         disco.setType(IQ.Type.GET);
         disco.setTo(entityID);
         disco.setNode(node);
 
-        Packet result = connection.createPacketCollectorAndSend(disco).nextResultOrThrow();
+        Packet result = connection().createPacketCollectorAndSend(disco).nextResultOrThrow();
 
         return (DiscoverInfo) result;
     }
@@ -549,9 +565,11 @@ public class ServiceDiscoveryManager {
      * 
      * @param entityID the address of the XMPP entity.
      * @return the discovered information.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException if the operation failed for some reason.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public DiscoverItems discoverItems(String entityID) throws XMPPException {
+    public DiscoverItems discoverItems(String entityID) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         return discoverItems(entityID, null);
     }
 
@@ -563,19 +581,18 @@ public class ServiceDiscoveryManager {
      * @param entityID the address of the XMPP entity.
      * @param node the optional attribute that supplements the 'jid' attribute.
      * @return the discovered items.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException if the operation failed for some reason.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public DiscoverItems discoverItems(String entityID, String node) throws XMPPException {
-        Connection connection = ServiceDiscoveryManager.this.connection.get();
-        if (connection == null) throw new XMPPException("Connection instance already gc'ed");
-
+    public DiscoverItems discoverItems(String entityID, String node) throws NoResponseException, XMPPErrorException, NotConnectedException {
         // Discover the entity's items
         DiscoverItems disco = new DiscoverItems();
         disco.setType(IQ.Type.GET);
         disco.setTo(entityID);
         disco.setNode(node);
 
-        Packet result = connection.createPacketCollectorAndSend(disco).nextResultOrThrow();
+        Packet result = connection().createPacketCollectorAndSend(disco).nextResultOrThrow();
         return (DiscoverItems) result;
     }
 
@@ -587,9 +604,11 @@ public class ServiceDiscoveryManager {
      * 
      * @param entityID the address of the XMPP entity.
      * @return true if the server supports publishing of items.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public boolean canPublishItems(String entityID) throws XMPPException {
+    public boolean canPublishItems(String entityID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         DiscoverInfo info = discoverInfo(entityID);
         return canPublishItems(info);
      }
@@ -600,7 +619,7 @@ public class ServiceDiscoveryManager {
       * be returned by the server whenever the server receives a disco request targeted to the bare
       * address of the client (i.e. user@host.com).
       * 
-      * @param DiscoverInfo the discover info packet to check.
+      * @param info the discover info packet to check.
       * @return true if the server supports publishing of items.
       */
      public static boolean canPublishItems(DiscoverInfo info) {
@@ -615,10 +634,11 @@ public class ServiceDiscoveryManager {
      * 
      * @param entityID the address of the XMPP entity.
      * @param discoverItems the DiscoveryItems to publish.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public void publishItems(String entityID, DiscoverItems discoverItems)
-            throws XMPPException {
+    public void publishItems(String entityID, DiscoverItems discoverItems) throws NoResponseException, XMPPErrorException, NotConnectedException {
         publishItems(entityID, null, discoverItems);
     }
 
@@ -631,18 +651,32 @@ public class ServiceDiscoveryManager {
      * @param entityID the address of the XMPP entity.
      * @param node the attribute that supplements the 'jid' attribute.
      * @param discoverItems the DiscoveryItems to publish.
-     * @throws XMPPException if the operation failed for some reason.
+     * @throws XMPPErrorException if the operation failed for some reason.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void publishItems(String entityID, String node, DiscoverItems discoverItems)
-            throws XMPPException {
-        Connection connection = ServiceDiscoveryManager.this.connection.get();
-        if (connection == null) throw new XMPPException("Connection instance already gc'ed");
-
+    public void publishItems(String entityID, String node, DiscoverItems discoverItems) throws NoResponseException, XMPPErrorException, NotConnectedException
+            {
         discoverItems.setType(IQ.Type.SET);
         discoverItems.setTo(entityID);
         discoverItems.setNode(node);
 
-        connection.createPacketCollectorAndSend(discoverItems).nextResultOrThrow();
+        connection().createPacketCollectorAndSend(discoverItems).nextResultOrThrow();
+    }
+
+    /**
+     * Queries the remote entity for it's features and returns true if the given feature is found.
+     *
+     * @param jid the JID of the remote entity
+     * @param feature
+     * @return true if the entity supports the feature, false otherwise
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
+     */
+    public boolean supportsFeature(String jid, String feature) throws NoResponseException, XMPPErrorException, NotConnectedException {
+        DiscoverInfo result = discoverInfo(jid);
+        return result.containsFeature(feature);
     }
 
     /**
@@ -650,8 +684,8 @@ public class ServiceDiscoveryManager {
      */
 
     /**
-     * Loads the ServiceDiscoveryManager with an EntityCapsManger
-     * that speeds up certain lookups
+     * Loads the ServiceDiscoveryManager with an EntityCapsManger that speeds up certain lookups.
+     * 
      * @param manager
      */
     public void setEntityCapsManager(EntityCapsManager manager) {
@@ -659,8 +693,7 @@ public class ServiceDiscoveryManager {
     }
 
     /**
-     * Updates the Entity Capabilities Verification String
-     * if EntityCaps is enabled
+     * Updates the Entity Capabilities Verification String if EntityCaps is enabled.
      */
     private void renewEntityCapsVersion() {
         if (capsManager != null && capsManager.entityCapsEnabled())

@@ -1,6 +1,6 @@
 /**
  *
- * Copyright © 2009 Jonas Ådahl, 2011-2013 Florian Schmaus
+ * Copyright © 2009 Jonas Ådahl, 2011-2014 Florian Schmaus
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jivesoftware.smackx.caps.packet;
 
 import org.jivesoftware.smack.packet.PacketExtension;
+import org.jivesoftware.smack.util.XmlStringBuilder;
 import org.jivesoftware.smackx.caps.EntityCapsManager;
 
 public class CapsExtension implements PacketExtension {
 
-    private String node, ver, hash;
-
-    public CapsExtension() {
-    }
+    private final String node, ver, hash;
 
     public CapsExtension(String node, String version, String hash) {
         this.node = node;
@@ -45,24 +42,12 @@ public class CapsExtension implements PacketExtension {
         return node;
     }
 
-    public void setNode(String node) {
-        this.node = node;
-    }
-
     public String getVer() {
         return ver;
     }
 
-    public void setVer(String ver) {
-        this.ver = ver;
-    }
-
     public String getHash() {
         return hash;
-    }
-
-    public void setHash(String hash) {
-        this.hash = hash;
     }
 
     /*
@@ -72,12 +57,10 @@ public class CapsExtension implements PacketExtension {
      *  ver='QgayPKawpkPSDYmwT/WM94uAlu0='/>
      *
      */
-    public String toXML() {
-        String xml = "<" + EntityCapsManager.ELEMENT + " xmlns=\"" + EntityCapsManager.NAMESPACE + "\" " +
-            "hash=\"" + hash + "\" " +
-            "node=\"" + node + "\" " +
-            "ver=\"" + ver + "\"/>";
-
+    public CharSequence toXML() {
+        XmlStringBuilder xml = new XmlStringBuilder(this);
+        xml.attribute("hash", hash).attribute("node", node).attribute("ver", ver);
+        xml.closeEmptyElement();
         return xml;
     }
 }

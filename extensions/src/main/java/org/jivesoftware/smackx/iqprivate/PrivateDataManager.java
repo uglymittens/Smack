@@ -17,8 +17,11 @@
 
 package org.jivesoftware.smackx.iqprivate;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.Manager;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.provider.IQProvider;
 import org.jivesoftware.smackx.iqprivate.packet.DefaultPrivateData;
@@ -28,6 +31,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 import java.util.Hashtable;
 import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * Manages private data, which is a mechanism to allow users to store arbitrary XML
@@ -51,7 +55,16 @@ import java.util.Map;
  *
  * @author Matt Tucker
  */
-public class PrivateDataManager {
+public class PrivateDataManager extends Manager {
+    private static final Map<XMPPConnection, PrivateDataManager> instances = new WeakHashMap<XMPPConnection, PrivateDataManager>();
+
+    public static synchronized PrivateDataManager getInstanceFor(XMPPConnection connection) {
+        PrivateDataManager privateDataManager = instances.get(connection);
+        if (connection == null) {
+            privateDataManager = new PrivateDataManager(connection);
+        }
+        return privateDataManager;
+    }
 
     /**
      * Map of provider instances.
@@ -111,49 +124,15 @@ public class PrivateDataManager {
         privateDataProviders.remove(key);
     }
 
-
-    private Connection connection;
-
     /**
-     * The user to get and set private data for. In most cases, this value should
-     * be <tt>null</tt>, as the typical use of private data is to get and set
-     * your own private data and not others.
-     */
-    private String user;
-
-    /**
-     * Creates a new private data manager. The connection must have
-     * undergone a successful login before being used to construct an instance of
-     * this class.
+     * Creates a new private data manager.
      *
      * @param connection an XMPP connection which must have already undergone a
      *      successful login.
      */
-    public PrivateDataManager(Connection connection) {
-        if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Must be logged in to XMPP server.");
-        }
-        this.connection = connection;
-    }
-
-    /**
-     * Creates a new private data manager for a specific user (special case). Most
-     * servers only support getting and setting private data for the user that
-     * authenticated via the connection. However, some servers support the ability
-     * to get and set private data for other users (for example, if you are the
-     * administrator). The connection must have undergone a successful login before
-     * being used to construct an instance of this class.
-     *
-     * @param connection an XMPP connection which must have already undergone a
-     *      successful login.
-     * @param user the XMPP address of the user to get and set private data for.
-     */
-    public PrivateDataManager(Connection connection, String user) {
-        if (!connection.isAuthenticated()) {
-            throw new IllegalStateException("Must be logged in to XMPP server.");
-        }
-        this.connection = connection;
-        this.user = user;
+    private PrivateDataManager(XMPPConnection connection) {
+        super(connection);
+        instances.put(connection, this);
     }
 
     /**
@@ -167,10 +146,11 @@ public class PrivateDataManager {
      * @param elementName the element name.
      * @param namespace the namespace.
      * @return the private data.
-     * @throws XMPPException if an error occurs getting the private data.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public PrivateData getPrivateData(final String elementName, final String namespace)
-            throws XMPPException
+    public PrivateData getPrivateData(final String elementName, final String namespace) throws NoResponseException, XMPPErrorException, NotConnectedException
     {
         // Create an IQ packet to get the private data.
         IQ privateDataGet = new IQ() {
@@ -183,12 +163,8 @@ public class PrivateDataManager {
             }
         };
         privateDataGet.setType(IQ.Type.GET);
-        // Address the packet to the other account if user has been set.
-        if (user != null) {
-            privateDataGet.setTo(user);
-        }
 
-        PrivateDataResult response = (PrivateDataResult) connection.createPacketCollectorAndSend(
+        PrivateDataResult response = (PrivateDataResult) connection().createPacketCollectorAndSend(
                         privateDataGet).nextResultOrThrow();
         return response.getPrivateData();
     }
@@ -199,9 +175,11 @@ public class PrivateDataManager {
      * element name and namespace, then the new private data will overwrite the old value.
      *
      * @param privateData the private data.
-     * @throws XMPPException if setting the private data fails.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public void setPrivateData(final PrivateData privateData) throws XMPPException {
+    public void setPrivateData(final PrivateData privateData) throws NoResponseException, XMPPErrorException, NotConnectedException {
         // Create an IQ packet to set the private data.
         IQ privateDataSet = new IQ() {
             public String getChildElementXML() {
@@ -213,12 +191,8 @@ public class PrivateDataManager {
             }
         };
         privateDataSet.setType(IQ.Type.SET);
-        // Address the packet to the other account if user has been set.
-        if (user != null) {
-            privateDataSet.setTo(user);
-        }
 
-        connection.createPacketCollectorAndSend(privateDataSet).nextResultOrThrow();
+        connection().createPacketCollectorAndSend(privateDataSet).nextResultOrThrow();
     }
 
     /**

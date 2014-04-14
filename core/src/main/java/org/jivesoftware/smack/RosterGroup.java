@@ -17,16 +17,19 @@
 
 package org.jivesoftware.smack;
 
-import org.jivesoftware.smack.filter.PacketIDFilter;
-import org.jivesoftware.smack.packet.IQ;
-import org.jivesoftware.smack.packet.RosterPacket;
-import org.jivesoftware.smack.util.StringUtils;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
+
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
+import org.jivesoftware.smack.packet.IQ;
+import org.jivesoftware.smack.packet.RosterPacket;
+import org.jivesoftware.smack.util.StringUtils;
 
 /**
  * A group of roster entries.
@@ -37,7 +40,7 @@ import java.util.Set;
 public class RosterGroup {
 
     private String name;
-    private Connection connection;
+    private XMPPConnection connection;
     private final Set<RosterEntry> entries;
 
     /**
@@ -46,7 +49,7 @@ public class RosterGroup {
      * @param name the name of the group.
      * @param connection the connection the group belongs to.
      */
-    RosterGroup(String name, Connection connection) {
+    RosterGroup(String name, XMPPConnection connection) {
         this.name = name;
         this.connection = connection;
         entries = new LinkedHashSet<RosterEntry>();
@@ -68,8 +71,9 @@ public class RosterGroup {
      * be invalid and will need to be updated to the new group specified by the new name.
      *
      * @param name the name of the group.
+     * @throws NotConnectedException 
      */
-    public void setName(String name) {
+    public void setName(String name) throws NotConnectedException {
         synchronized (entries) {
             for (RosterEntry entry : entries) {
                 RosterPacket packet = new RosterPacket();
@@ -119,7 +123,7 @@ public class RosterGroup {
         // Roster entries never include a resource so remove the resource
         // if it's a part of the XMPP address.
         user = StringUtils.parseBareAddress(user);
-        String userLowerCase = user.toLowerCase();
+        String userLowerCase = user.toLowerCase(Locale.US);
         synchronized (entries) {
             for (RosterEntry entry : entries) {
                 if (entry.getUser().equals(userLowerCase)) {
@@ -155,13 +159,15 @@ public class RosterGroup {
     /**
      * Adds a roster entry to this group. If the entry was unfiled then it will be removed from 
      * the unfiled list and will be added to this group.
-     * Note that this is an asynchronous call -- Smack must wait for the server
+     * Note that this is a synchronous call -- Smack must wait for the server
      * to receive the updated roster.
      *
      * @param entry a roster entry.
-     * @throws XMPPException if an error occured while trying to add the entry to the group.
+     * @throws XMPPErrorException if an error occured while trying to add the entry to the group.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void addEntry(RosterEntry entry) throws XMPPException {
+    public void addEntry(RosterEntry entry) throws NoResponseException, XMPPErrorException, NotConnectedException {
         PacketCollector collector = null;
         // Only add the entry if it isn't already in the list.
         synchronized (entries) {
@@ -172,9 +178,7 @@ public class RosterGroup {
                 item.addGroupName(getName());
                 packet.addRosterItem(item);
                 // Wait up to a certain number of seconds for a reply from the server.
-                collector = connection
-                        .createPacketCollector(new PacketIDFilter(packet.getPacketID()));
-                connection.sendPacket(packet);
+                collector = connection.createPacketCollectorAndSend(packet);
             }
         }
         if (collector != null) {
@@ -186,13 +190,15 @@ public class RosterGroup {
      * Removes a roster entry from this group. If the entry does not belong to any other group 
      * then it will be considered as unfiled, therefore it will be added to the list of unfiled 
      * entries.
-     * Note that this is an asynchronous call -- Smack must wait for the server
+     * Note that this is a synchronous call -- Smack must wait for the server
      * to receive the updated roster.
      *
      * @param entry a roster entry.
-     * @throws XMPPException if an error occured while trying to remove the entry from the group. 
+     * @throws XMPPErrorException if an error occurred while trying to remove the entry from the group. 
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void removeEntry(RosterEntry entry) throws XMPPException {
+    public void removeEntry(RosterEntry entry) throws NoResponseException, XMPPErrorException, NotConnectedException {
         PacketCollector collector = null;
         // Only remove the entry if it's in the entry list.
         // Remove the entry locally, if we wait for RosterPacketListenerprocess>>Packet(Packet)
@@ -206,9 +212,7 @@ public class RosterGroup {
                 item.removeGroupName(this.getName());
                 packet.addRosterItem(item);
                 // Wait up to a certain number of seconds for a reply from the server.
-                collector = connection
-                        .createPacketCollector(new PacketIDFilter(packet.getPacketID()));
-                connection.sendPacket(packet);
+                collector = connection.createPacketCollectorAndSend(packet);
             }
         }
         if (collector != null) {

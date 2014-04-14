@@ -22,12 +22,13 @@ import java.net.URISyntaxException;
 
 import org.jivesoftware.smack.ConnectionConfiguration;
 import org.jivesoftware.smack.proxy.ProxyInfo;
+import org.jivesoftware.smack.util.dns.HostAddress;
 
 /**
  * Configuration to use while establishing the connection to the XMPP server via
  * HTTP binding.
  * 
- * @see BOSHConnection
+ * @see XMPPBOSHConnection
  * @author Guenther Niess
  */
 public class BOSHConfiguration extends ConnectionConfiguration {
@@ -37,14 +38,12 @@ public class BOSHConfiguration extends ConnectionConfiguration {
 
     public BOSHConfiguration(String xmppDomain) {
         super(xmppDomain, 7070);
-        setSASLAuthenticationEnabled(true);
         ssl = false;
         file = "/http-bind/";
     }
 
     public BOSHConfiguration(String xmppDomain, int port) {
         super(xmppDomain, port);
-        setSASLAuthenticationEnabled(true);
         ssl = false;
         file = "/http-bind/";
     }
@@ -65,7 +64,6 @@ public class BOSHConfiguration extends ConnectionConfiguration {
      */
     public BOSHConfiguration(boolean https, String host, int port, String filePath, String xmppDomain) {
         super(host, port, xmppDomain);
-        setSASLAuthenticationEnabled(true);
         ssl = https;
         file = (filePath != null ? filePath : "/");
     }
@@ -87,7 +85,6 @@ public class BOSHConfiguration extends ConnectionConfiguration {
      */
     public BOSHConfiguration(boolean https, String host, int port, String filePath, ProxyInfo proxy, String xmppDomain) {
         super(host, port, xmppDomain, proxy);
-        setSASLAuthenticationEnabled(true);
         ssl = https;
         file = (filePath != null ? filePath : "/");
     }
@@ -116,6 +113,16 @@ public class BOSHConfiguration extends ConnectionConfiguration {
         if (file.charAt(0) != '/') {
             file = '/' + file;
         }
-        return new URI((ssl ? "https://" : "http://") + getHost() + ":" + getPort() + file);
+        String host;
+        int port;
+        if (hostAddresses != null) {
+            HostAddress hostAddress = hostAddresses.get(0);
+            host = hostAddress.getFQDN();
+            port = hostAddress.getPort();
+        } else {
+            host = getServiceName();
+            port = 80;
+        }
+        return new URI((ssl ? "https://" : "http://") + host + ":" + port + file);
     }
 }

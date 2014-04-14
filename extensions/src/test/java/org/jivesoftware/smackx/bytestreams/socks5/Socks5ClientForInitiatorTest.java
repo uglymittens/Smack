@@ -22,8 +22,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.XMPPError;
 import org.jivesoftware.smack.packet.IQ.Type;
@@ -60,14 +62,15 @@ public class Socks5ClientForInitiatorTest {
     Protocol protocol;
 
     // mocked XMPP connection
-    Connection connection;
+    XMPPConnection connection;
 
     /**
      * Initialize fields used in the tests.
      * @throws XMPPException 
+     * @throws SmackException 
      */
     @Before
-    public void setup() throws XMPPException {
+    public void setup() throws XMPPException, SmackException {
 
         // build protocol verifier
         protocol = new Protocol();
@@ -106,7 +109,7 @@ public class Socks5ClientForInitiatorTest {
 
             fail("exception should be thrown");
         }
-        catch (XMPPException e) {
+        catch (SmackException e) {
             assertTrue(e.getMessage().contains("target is not connected to SOCKS5 proxy"));
             protocol.verifyAll(); // assert no XMPP messages were sent
         }
@@ -193,7 +196,7 @@ public class Socks5ClientForInitiatorTest {
     public void shouldFailIfActivateSocks5ProxyFails() throws Exception {
 
         // build error response as reply to the stream activation
-        XMPPError xmppError = new XMPPError(XMPPError.Condition.interna_server_error);
+        XMPPError xmppError = new XMPPError(XMPPError.Condition.internal_server_error);
         IQ error = new IQ() {
 
             public String getChildElementXML() {
@@ -228,8 +231,8 @@ public class Socks5ClientForInitiatorTest {
 
             fail("exception should be thrown");
         }
-        catch (XMPPException e) {
-            assertTrue(e.getMessage().contains("activating SOCKS5 Bytestream failed"));
+        catch (XMPPErrorException e) {
+            assertTrue(XMPPError.Condition.internal_server_error.equals(e.getXMPPError().getCondition()));
             protocol.verifyAll();
         }
 

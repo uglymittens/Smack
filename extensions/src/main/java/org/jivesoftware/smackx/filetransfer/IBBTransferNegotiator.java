@@ -19,10 +19,12 @@ package org.jivesoftware.smackx.filetransfer;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.AndFilter;
-import org.jivesoftware.smack.filter.FromContainsFilter;
+import org.jivesoftware.smack.filter.FromMatchesFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.IQ;
@@ -45,7 +47,7 @@ import org.jivesoftware.smackx.si.packet.StreamInitiation;
  */
 public class IBBTransferNegotiator extends StreamNegotiator {
 
-    private Connection connection;
+    private XMPPConnection connection;
 
     private InBandBytestreamManager manager;
 
@@ -54,23 +56,23 @@ public class IBBTransferNegotiator extends StreamNegotiator {
      * 
      * @param connection The connection which this negotiator works on.
      */
-    protected IBBTransferNegotiator(Connection connection) {
+    protected IBBTransferNegotiator(XMPPConnection connection) {
         this.connection = connection;
         this.manager = InBandBytestreamManager.getByteStreamManager(connection);
     }
 
     public OutputStream createOutgoingStream(String streamID, String initiator,
-                    String target) throws XMPPException {
+                    String target) throws NoResponseException, XMPPErrorException, NotConnectedException {
         InBandBytestreamSession session = this.manager.establishSession(target, streamID);
         session.setCloseBothStreamsEnabled(true);
         return session.getOutputStream();
     }
 
     public InputStream createIncomingStream(StreamInitiation initiation)
-                    throws XMPPException {
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
         /*
-         * In-Band Bytestream initiation listener must ignore next in-band
-         * bytestream request with given session ID
+         * In-Band Bytestream initiation listener must ignore next in-band bytestream request with
+         * given session ID
          */
         this.manager.ignoreBytestreamRequestOnce(initiation.getSessionID());
 
@@ -86,14 +88,14 @@ public class IBBTransferNegotiator extends StreamNegotiator {
          */
         this.manager.ignoreBytestreamRequestOnce(streamID);
 
-        return new AndFilter(new FromContainsFilter(from), new IBBOpenSidFilter(streamID));
+        return new AndFilter(FromMatchesFilter.create(from), new IBBOpenSidFilter(streamID));
     }
 
     public String[] getNamespaces() {
         return new String[] { InBandBytestreamManager.NAMESPACE };
     }
 
-    InputStream negotiateIncomingStream(Packet streamInitiation) throws XMPPException {
+    InputStream negotiateIncomingStream(Packet streamInitiation) throws NotConnectedException {
         // build In-Band Bytestream request
         InBandBytestreamRequest request = new ByteStreamRequest(this.manager,
                         (Open) streamInitiation);

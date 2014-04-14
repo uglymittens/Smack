@@ -167,7 +167,7 @@ public class MessageTest extends SmackTestCase {
         // Send the first message
         getConnection(0).sendPacket(msg);
         // Check that the connection that sent the message is still connected
-        assertTrue("Connection was closed", getConnection(0).isConnected());
+        assertTrue("XMPPConnection was closed", getConnection(0).isConnected());
         // Check that the message was received
         Message rcv = (Message) collector.nextResult(1000);
         assertNotNull("No Message was received", rcv);
@@ -175,7 +175,7 @@ public class MessageTest extends SmackTestCase {
         // Send the second message
         getConnection(0).sendPacket(msg);
         // Check that the connection that sent the message is still connected
-        assertTrue("Connection was closed", getConnection(0).isConnected());
+        assertTrue("XMPPConnection was closed", getConnection(0).isConnected());
         // Check that the second message was received
         rcv = (Message) collector.nextResult(1000);
         assertNotNull("No Message was received", rcv);
@@ -194,7 +194,7 @@ public class MessageTest extends SmackTestCase {
         // Create another connection for the same user of connection 1
         ConnectionConfiguration connectionConfiguration =
                 new ConnectionConfiguration(getHost(), getPort(), getServiceName());
-        XMPPConnection conn3 = new XMPPConnection(connectionConfiguration);
+        XMPPTCPConnection conn3 = new XMPPConnection(connectionConfiguration);
         conn3.connect();
         conn3.login(getUsername(0), getPassword(0), "Home");
         // Set this connection as highest priority
@@ -243,7 +243,7 @@ public class MessageTest extends SmackTestCase {
         // Create another connection for the same user of connection 1
         ConnectionConfiguration connectionConfiguration =
                 new ConnectionConfiguration(getHost(), getPort(), getServiceName());
-        XMPPConnection conn3 = new XMPPConnection(connectionConfiguration);
+        XMPPTCPConnection conn3 = new XMPPConnection(connectionConfiguration);
         conn3.connect();
         conn3.login(getUsername(0), getPassword(0), "Home");
         // Set this connection as highest priority
@@ -292,7 +292,7 @@ public class MessageTest extends SmackTestCase {
         // Create another connection for the same user of connection 1
         ConnectionConfiguration connectionConfiguration =
                 new ConnectionConfiguration(getHost(), getPort(), getServiceName());
-        XMPPConnection conn3 = new XMPPConnection(connectionConfiguration);
+        XMPPTCPConnection conn3 = new XMPPConnection(connectionConfiguration);
         conn3.connect();
         conn3.login(getUsername(0), getPassword(0), "Home");
         // Set this connection as highest priority
@@ -308,7 +308,7 @@ public class MessageTest extends SmackTestCase {
 
         connectionConfiguration =
                 new ConnectionConfiguration(getHost(), getPort(), getServiceName());
-        XMPPConnection conn4 = new XMPPConnection(connectionConfiguration);
+        XMPPTCPConnection conn4 = new XMPPConnection(connectionConfiguration);
         conn4.connect();
         conn4.login(getUsername(0), getPassword(0), "Home2");
         presence = new Presence(Presence.Type.available);

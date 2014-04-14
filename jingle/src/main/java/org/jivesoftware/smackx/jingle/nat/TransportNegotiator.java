@@ -23,6 +23,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Logger;
 
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smackx.jingle.ContentNegotiator;
@@ -33,10 +35,10 @@ import org.jivesoftware.smackx.jingle.JingleNegotiatorState;
 import org.jivesoftware.smackx.jingle.JingleSession;
 import org.jivesoftware.smackx.jingle.listeners.JingleListener;
 import org.jivesoftware.smackx.jingle.listeners.JingleTransportListener;
-import org.jivesoftware.smackx.packet.Jingle;
-import org.jivesoftware.smackx.packet.JingleContent;
-import org.jivesoftware.smackx.packet.JingleTransport;
-import org.jivesoftware.smackx.packet.JingleTransport.JingleTransportCandidate;
+import org.jivesoftware.smackx.jingle.packet.Jingle;
+import org.jivesoftware.smackx.jingle.packet.JingleContent;
+import org.jivesoftware.smackx.jingle.packet.JingleTransport;
+import org.jivesoftware.smackx.jingle.packet.JingleTransport.JingleTransportCandidate;
 
 /**
  * Transport negotiator.
@@ -87,7 +89,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
     /**
     * Default constructor.
     *
-    * @param js            The Jingle session
+    * @param session            The Jingle session
     * @param transResolver The JingleTransportManager to use
     */
     public TransportNegotiator(JingleSession session, TransportResolver transResolver, ContentNegotiator parentNegotiator) {
@@ -160,7 +162,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
         try {
             sendTransportCandidatesOffer();
             setNegotiatorState(JingleNegotiatorState.PENDING);
-        } catch (XMPPException e) {
+        } catch (Exception e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
         }
@@ -318,12 +320,22 @@ public abstract class TransportNegotiator extends JingleNegotiator {
                                 jout.addContent(content);
 
                                 // Send the packet
-                                js.sendFormattedJingle(jin, jout);
+                                try {
+                                    js.sendFormattedJingle(jin, jout);
+                                }
+                                catch (NotConnectedException e) {
+                                    throw new IllegalStateException(e);
+                                }
                                 acceptedRemoteCandidates.add(bestRemote);
                             }
                             if ((isEstablished()) && (getNegotiatorState() == JingleNegotiatorState.PENDING)) {
                                 setNegotiatorState(JingleNegotiatorState.SUCCEEDED);
-                                triggerTransportEstablished(getAcceptedLocalCandidate(), bestRemote);
+                                try {
+                                    triggerTransportEstablished(getAcceptedLocalCandidate(), bestRemote);
+                                }
+                                catch (NotConnectedException e) {
+                                    throw new IllegalStateException(e);
+                                }
                                 break;
                             }
                         }
@@ -399,7 +411,12 @@ public abstract class TransportNegotiator extends JingleNegotiator {
                                 jout.addContent(content);
 
                                 // Send the packet
-                                js.sendFormattedJingle(jin, jout);
+                                try {
+                                    js.sendFormattedJingle(jin, jout);
+                                }
+                                catch (NotConnectedException e) {
+                                    throw new IllegalStateException(e);
+                                }
                                 acceptedRemoteCandidates.add(bestRemote);
                             }
                             if (isEstablished()) {
@@ -413,7 +430,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
                         try {
                             session
                                     .terminate("Unable to negotiate session. This may be caused by firewall configuration problems.");
-                        } catch (XMPPException e) {
+                        } catch (Exception e) {
                             e.printStackTrace();
                         }
                     }
@@ -503,16 +520,13 @@ public abstract class TransportNegotiator extends JingleNegotiator {
         return result;
     }
 
-    private boolean isOfferStarted() {
-        return resolver.isResolving() || resolver.isResolved();
-    }
-
     /**
      * Send an offer for a transport candidate
      *
      * @param cand
+     * @throws NotConnectedException 
      */
-    private synchronized void sendTransportCandidateOffer(TransportCandidate cand) {
+    private synchronized void sendTransportCandidateOffer(TransportCandidate cand) throws NotConnectedException {
         if (!cand.isNull()) {
             // Offer our new candidate...
             addOfferedCandidate(cand);
@@ -532,8 +546,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
      * Create a Jingle packet where we announce our transport candidates.
      *
      * @throws XMPPException
+     * @throws SmackException 
      */
-    private void sendTransportCandidatesOffer() throws XMPPException {
+    private void sendTransportCandidatesOffer() throws XMPPException, SmackException {
         List<TransportCandidate> notOffered = resolver.getCandidatesList();
 
         notOffered.removeAll(offeredCandidates);
@@ -547,7 +562,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
         if (resolverListener == null) {
             // Add a listener that sends the offer when the resolver finishes...
             resolverListener = new TransportResolverListener.Resolver() {
-                public void candidateAdded(TransportCandidate cand) {
+                public void candidateAdded(TransportCandidate cand) throws NotConnectedException {
                     sendTransportCandidateOffer(cand);
                 }
 
@@ -576,8 +591,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
      * @param iq the packet received
      * @return the new Jingle packet to send.
      * @throws XMPPException
+     * @throws SmackException 
      */
-    public final List<IQ> dispatchIncomingPacket(IQ iq, String id) throws XMPPException {
+    public final List<IQ> dispatchIncomingPacket(IQ iq, String id) throws XMPPException, SmackException {
         List<IQ> responses = new ArrayList<IQ>();
         IQ response = null;
 
@@ -645,8 +661,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
      *
      * @return an IQ packet
      * @throws XMPPException
+     * @throws SmackException 
      */
-    private Jingle receiveResult(IQ iq) throws XMPPException {
+    private Jingle receiveResult(IQ iq) throws XMPPException, SmackException {
         Jingle response = null;
 
         sendTransportCandidatesOffer();
@@ -658,9 +675,10 @@ public abstract class TransportNegotiator extends JingleNegotiator {
     /**
      *  @param jingle
      *  @param jingleTransport
-     *  @return
+     *  @return the iq
+     * @throws SmackException 
      */
-    private IQ receiveSessionInitiateAction(Jingle jingle) throws XMPPException {
+    private IQ receiveSessionInitiateAction(Jingle jingle) throws XMPPException, SmackException {
         IQ response = null;
 
         // Parse the Jingle and get any proposed transport candidates
@@ -682,7 +700,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
     /**
      *  @param jingle
      *  @param jingleTransport
-     *  @return
+     *  @return the iq
      */
     private IQ receiveTransportInfoAction(Jingle jingle) throws XMPPException {
         IQ response = null;
@@ -718,7 +736,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
      * @param jin The input packet
      * @return a Jingle packet
      * @throws XMPPException an exception
-     * @see org.jivesoftware.smackx.jingle.JingleNegotiator.State#eventAccept(org.jivesoftware.smackx.packet.Jingle)
+     * @see org.jivesoftware.smackx.jingle.JingleNegotiator.State#eventAccept(org.jivesoftware.smackx.jingle.packet.Jingle)
      */
     private IQ receiveContentAcceptAction(Jingle jingle) throws XMPPException {
         IQ response = null;
@@ -744,7 +762,7 @@ public abstract class TransportNegotiator extends JingleNegotiator {
 
     /**
      *  @param jingle
-     *  @return
+     *  @return the iq
      */
     private IQ receiveSessionAcceptAction(Jingle jingle) {
         IQ response = null;
@@ -762,8 +780,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
      *
      * @param local  TransportCandidate that has been agreed.
      * @param remote TransportCandidate that has been agreed.
+     * @throws NotConnectedException 
      */
-    private void triggerTransportEstablished(TransportCandidate local, TransportCandidate remote) {
+    private void triggerTransportEstablished(TransportCandidate local, TransportCandidate remote) throws NotConnectedException {
         List<JingleListener> listeners = getListenersList();
         for (JingleListener li : listeners) {
             if (li instanceof JingleTransportListener) {
@@ -812,9 +831,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
         /**
          * Get a TransportNegotiator instance.
          */
-        public org.jivesoftware.smackx.packet.JingleTransport getJingleTransport(TransportCandidate bestRemote) {
-            org.jivesoftware.smackx.packet.JingleTransport.RawUdp jt = new org.jivesoftware.smackx.packet.JingleTransport.RawUdp();
-            jt.addCandidate(new org.jivesoftware.smackx.packet.JingleTransport.RawUdp.Candidate(bestRemote));
+        public org.jivesoftware.smackx.jingle.packet.JingleTransport getJingleTransport(TransportCandidate bestRemote) {
+            org.jivesoftware.smackx.jingle.packet.JingleTransport.RawUdp jt = new org.jivesoftware.smackx.jingle.packet.JingleTransport.RawUdp();
+            jt.addCandidate(new org.jivesoftware.smackx.jingle.packet.JingleTransport.RawUdp.Candidate(bestRemote));
             return jt;
         }
 
@@ -866,9 +885,9 @@ public abstract class TransportNegotiator extends JingleNegotiator {
          *
          * @param candidate
          */
-        public org.jivesoftware.smackx.packet.JingleTransport getJingleTransport(TransportCandidate candidate) {
-            org.jivesoftware.smackx.packet.JingleTransport.Ice jt = new org.jivesoftware.smackx.packet.JingleTransport.Ice();
-            jt.addCandidate(new org.jivesoftware.smackx.packet.JingleTransport.Ice.Candidate(candidate));
+        public org.jivesoftware.smackx.jingle.packet.JingleTransport getJingleTransport(TransportCandidate candidate) {
+            org.jivesoftware.smackx.jingle.packet.JingleTransport.Ice jt = new org.jivesoftware.smackx.jingle.packet.JingleTransport.Ice();
+            jt.addCandidate(new org.jivesoftware.smackx.jingle.packet.JingleTransport.Ice.Candidate(candidate));
             return jt;
         }
 

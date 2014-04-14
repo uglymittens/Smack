@@ -45,13 +45,13 @@ public class CompressionTest extends SmackTestCase {
         config.setCompressionEnabled(true);
         config.setSASLAuthenticationEnabled(true);
 
-        XMPPConnection connection = new XMPPConnection(config);
+        XMPPTCPConnection connection = new XMPPConnection(config);
         connection.connect();
 
         // Login with the test account
         connection.login("user0", "user0");
 
-        assertTrue("Connection is not using stream compression", connection.isUsingCompression());
+        assertTrue("XMPPConnection is not using stream compression", connection.isUsingCompression());
 
         // Request the version of the server
         Version version = new Version();
@@ -84,7 +84,7 @@ public class CompressionTest extends SmackTestCase {
      */
     protected void setUp() throws Exception {
         super.setUp();
-        XMPPConnection setupConnection = new XMPPConnection(getServiceName());
+        XMPPTCPConnection setupConnection = new XMPPConnection(getServiceName());
         setupConnection.connect();
         if (!setupConnection.getAccountManager().supportsAccountCreation())
             fail("Server does not support account creation");
@@ -105,7 +105,7 @@ public class CompressionTest extends SmackTestCase {
      */
     protected void tearDown() throws Exception {
         super.tearDown();
-        XMPPConnection setupConnection = createConnection();
+        XMPPTCPConnection setupConnection = createConnection();
         setupConnection.connect();
         setupConnection.login("user0", "user0");
         // Delete the created account for the test

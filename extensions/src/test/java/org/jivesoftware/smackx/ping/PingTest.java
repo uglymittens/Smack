@@ -1,6 +1,6 @@
 /**
  *
- * Copyright 2012 Florian Schmaus
+ * Copyright 2012-2014 Florian Schmaus
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,20 +19,24 @@ package org.jivesoftware.smackx.ping;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import org.jivesoftware.smack.DummyConnection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.ThreadedDummyConnection;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.test.util.TestUtils;
 import org.jivesoftware.smack.util.PacketParserUtils;
+import org.jivesoftware.smackx.InitExtensions;
 import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
 import org.jivesoftware.smackx.ping.packet.Ping;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
-public class PingTest {
+public class PingTest extends InitExtensions {
     private DummyConnection dummyCon;
     private ThreadedDummyConnection threadedCon;
     
@@ -42,7 +46,6 @@ public class PingTest {
         threadedCon = new ThreadedDummyConnection();
     }
 
-    @Ignore // gradle migration
     @Test
     public void checkProvider() throws Exception {
         // @formatter:off
@@ -64,22 +67,24 @@ public class PingTest {
         assertTrue(pongPacket instanceof IQ);
 
         IQ pong = (IQ) pongPacket;
-        assertEquals("juliet@capulet.lit/balcony", pong.getFrom());
         assertEquals("capulet.lit", pong.getTo());
         assertEquals("s2c1", pong.getPacketID());
         assertEquals(IQ.Type.RESULT, pong.getType());
     }
 
     @Test
-    public void checkSendingPing() throws Exception {
+    public void checkSendingPing() throws InterruptedException {
         dummyCon = new DummyConnection();
         PingManager pinger = PingManager.getInstanceFor(dummyCon);
-        pinger.ping("test@myserver.com");
+        try {
+            pinger.ping("test@myserver.com");
+        }
+        catch (SmackException e) {
+            // Ignore the fact the server won't answer for this unit test.
+        }
 
         Packet sentPacket = dummyCon.getSentPacket();
-        
         assertTrue(sentPacket instanceof Ping);
-        
     }
 
     @Test
@@ -96,17 +101,20 @@ public class PingTest {
 
     /**
      * DummyConnection will not reply so it will timeout.
-     * @throws Exception
+     * @throws SmackException 
      */
     @Test
-    public void checkFailedPingOnTimeout() throws Exception {
+    public void checkFailedPingOnTimeout() throws SmackException {
         dummyCon = new DummyConnection();
         PingManager pinger = PingManager.getInstanceFor(dummyCon);
 
-        boolean pingSuccess = pinger.ping("test@myserver.com");
-        
-        assertFalse(pingSuccess);
-        
+        try {
+            pinger.ping("test@myserver.com");
+        }
+        catch (NoResponseException e) {
+            return;
+        }
+        fail();
     }
     
     /**
@@ -172,16 +180,14 @@ public class PingTest {
     }
     
     @Test
-    public void checkPingToServerTimeout() throws Exception {
+    public void checkPingToServerTimeout() throws NotConnectedException {
         DummyConnection con = new DummyConnection();
         PingManager pinger = PingManager.getInstanceFor(con);
 
-        boolean pingSuccess = pinger.pingMyServer();
-        
-        assertFalse(pingSuccess);
+        boolean res = pinger.pingMyServer();
+        assertFalse(res);
     }
 
-    @Ignore // gradle migration
     @Test
     public void checkSuccessfulDiscoRequest() throws Exception {
         ThreadedDummyConnection con = new ThreadedDummyConnection();
@@ -204,7 +210,6 @@ public class PingTest {
         assertTrue(pingSupported);
     }
 
-    @Ignore // gradle migration
     @Test
     public void checkUnuccessfulDiscoRequest() throws Exception {
         ThreadedDummyConnection con = new ThreadedDummyConnection();

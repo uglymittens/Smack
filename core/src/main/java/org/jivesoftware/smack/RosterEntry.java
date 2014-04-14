@@ -17,6 +17,7 @@
 
 package org.jivesoftware.smack;
 
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.RosterPacket;
 
@@ -35,7 +36,7 @@ public class RosterEntry {
     private RosterPacket.ItemType type;
     private RosterPacket.ItemStatus status;
     final private Roster roster;
-    final private Connection connection;
+    final private XMPPConnection connection;
 
     /**
      * Creates a new roster entry.
@@ -47,7 +48,7 @@ public class RosterEntry {
      * @param connection a connection to the XMPP server.
      */
     RosterEntry(String user, String name, RosterPacket.ItemType type,
-                RosterPacket.ItemStatus status, Roster roster, Connection connection) {
+                RosterPacket.ItemStatus status, Roster roster, XMPPConnection connection) {
         this.user = user;
         this.name = name;
         this.type = type;
@@ -78,8 +79,9 @@ public class RosterEntry {
      * Sets the name associated with this entry.
      *
      * @param name the name.
+     * @throws NotConnectedException 
      */
-    public void setName(String name) {
+    public void setName(String name) throws NotConnectedException {
         // Do nothing if the name hasn't changed.
         if (name != null && name.equals(this.name)) {
             return;

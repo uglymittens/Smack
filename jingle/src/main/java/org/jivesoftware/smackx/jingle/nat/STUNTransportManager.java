@@ -16,7 +16,6 @@
  */
 package org.jivesoftware.smackx.jingle.nat;
 
-import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.jingle.JingleSession;
 
 /**
@@ -32,7 +31,7 @@ public class STUNTransportManager extends JingleTransportManager {
         };
         try {
             stunResolver.initializeAndWait();
-        } catch (XMPPException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
@@ -40,7 +39,7 @@ public class STUNTransportManager extends JingleTransportManager {
     protected TransportResolver createResolver(JingleSession session) {
         try {
             stunResolver.resolve(session);
-        } catch (XMPPException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
         return stunResolver;

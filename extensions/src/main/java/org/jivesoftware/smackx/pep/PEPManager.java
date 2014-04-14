@@ -21,7 +21,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.filter.PacketExtensionFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.Message;
@@ -57,12 +58,11 @@ import org.jivesoftware.smackx.pep.packet.PEPPubSub;
  * 
  * @author Jeff Williams
  */
-@Deprecated
 public class PEPManager {
 
     private List<PEPListener> pepListeners = new ArrayList<PEPListener>();
 
-    private Connection connection;
+    private XMPPConnection connection;
 
     private PacketFilter packetFilter = new PacketExtensionFilter("event", "http://jabber.org/protocol/pubsub#event");
     private PacketListener packetListener;
@@ -70,9 +70,9 @@ public class PEPManager {
     /**
      * Creates a new PEP exchange manager.
      *
-     * @param connection a Connection which is used to send and receive messages.
+     * @param connection a XMPPConnection which is used to send and receive messages.
      */
-    public PEPManager(Connection connection) {
+    public PEPManager(XMPPConnection connection) {
         this.connection = connection;
         init();
     }
@@ -106,8 +106,9 @@ public class PEPManager {
      * Publish an event.
      * 
      * @param item the item to publish.
+     * @throws NotConnectedException 
      */
-    public void publish(PEPItem item) {
+    public void publish(PEPItem item) throws NotConnectedException {
         // Create a new message to publish the event.
         PEPPubSub pubSub = new PEPPubSub(item);
         pubSub.setType(Type.SET);

@@ -21,13 +21,13 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.Enumeration;
-import java.util.Iterator;
 import java.util.logging.Logger;
 
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.PacketCollector;
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.filter.PacketIDFilter;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.provider.IQProvider;
 import org.jivesoftware.smack.provider.ProviderManager;
@@ -149,7 +149,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the Session ID of the Packet (usually same as Jingle Session ID)
      *
-     * @return
+     * @return the session ID
      */
     public String getSid() {
         return sid;
@@ -167,7 +167,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the Host A IP Address
      *
-     * @return
+     * @return the Host A IP Address
      */
     public String getHostA() {
         return hostA;
@@ -185,7 +185,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the Host B IP Address
      *
-     * @return
+     * @return the Host B IP Address
      */
     public String getHostB() {
         return hostB;
@@ -203,7 +203,7 @@ public class RTPBridge extends IQ {
     /**
      * Get Side A receive port
      *
-     * @return
+     * @return the side A receive prot
      */
     public int getPortA() {
         return portA;
@@ -221,7 +221,7 @@ public class RTPBridge extends IQ {
     /**
      * Get Side B receive port
      *
-     * @return
+     * @return the side B receive port
      */
     public int getPortB() {
         return portB;
@@ -239,7 +239,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the RTP Bridge IP
      *
-     * @return
+     * @return the RTP Bridge IP
      */
     public String getIp() {
         return ip;
@@ -257,7 +257,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the RTP Agent Pass
      *
-     * @return
+     * @return the RTP Agent Pass
      */
     public String getPass() {
         return pass;
@@ -275,7 +275,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the name of the Candidate
      *
-     * @return
+     * @return the name of the Candidate
      */
     public String getName() {
         return name;
@@ -293,7 +293,7 @@ public class RTPBridge extends IQ {
     /**
      * Get the Child Element XML of the Packet
      *
-     * @return
+     * @return the Child Element XML of the Packet
      */
     public String getChildElementXML() {
         StringBuilder str = new StringBuilder();
@@ -328,7 +328,6 @@ public class RTPBridge extends IQ {
 
             int eventType;
             String elementName;
-            String namespace;
 
             if (!parser.getNamespace().equals(RTPBridge.NAMESPACE))
                 throw new Exception("Not a RTP Bridge packet");
@@ -344,7 +343,6 @@ public class RTPBridge extends IQ {
             while (!done) {
                 eventType = parser.next();
                 elementName = parser.getName();
-                namespace = parser.getNamespace();
 
                 if (eventType == XmlPullParser.START_TAG) {
                     if (elementName.equals("candidate")) {
@@ -362,8 +360,6 @@ public class RTPBridge extends IQ {
                         }
                     }
                     else if (elementName.equals("publicip")) {
-                        //String p = parser.getAttributeName(0);
-                        int x = parser.getAttributeCount();
                         for (int i = 0; i < parser.getAttributeCount(); i++) {
                             if (parser.getAttributeName(i).equals("ip"))
                                 iq.setIp(parser.getAttributeValue(i));
@@ -386,9 +382,10 @@ public class RTPBridge extends IQ {
      *
      * @param connection
      * @param sessionID
-     * @return
+     * @return the new RTPBridge
+     * @throws NotConnectedException 
      */
-    public static RTPBridge getRTPBridge(Connection connection, String sessionID) {
+    public static RTPBridge getRTPBridge(XMPPConnection connection, String sessionID) throws NotConnectedException {
 
         if (!connection.isConnected()) {
             return null;
@@ -397,10 +394,7 @@ public class RTPBridge extends IQ {
         RTPBridge rtpPacket = new RTPBridge(sessionID);
         rtpPacket.setTo(RTPBridge.NAME + "." + connection.getServiceName());
 
-        PacketCollector collector = connection
-                .createPacketCollector(new PacketIDFilter(rtpPacket.getPacketID()));
-
-        connection.sendPacket(rtpPacket);
+        PacketCollector collector = connection.createPacketCollectorAndSend(rtpPacket);
 
         RTPBridge response = (RTPBridge) collector.nextResult();
 
@@ -414,9 +408,13 @@ public class RTPBridge extends IQ {
      * Check if the server support RTPBridge Service.
      *
      * @param connection
-     * @return
+     * @return true if the server supports the RTPBridge service
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static boolean serviceAvailable(Connection connection) {
+    public static boolean serviceAvailable(XMPPConnection connection) throws NoResponseException,
+                    XMPPErrorException, NotConnectedException {
 
         if (!connection.isConnected()) {
             return false;
@@ -426,7 +424,6 @@ public class RTPBridge extends IQ {
 
         ServiceDiscoveryManager disco = ServiceDiscoveryManager
                 .getInstanceFor(connection);
-        try {
 //            DiscoverItems items = disco.discoverItems(connection.getServiceName());
 //            Iterator iter = items.getItems();
 //            while (iter.hasNext()) {
@@ -436,17 +433,11 @@ public class RTPBridge extends IQ {
 //                }
 //            }
             
-            DiscoverInfo discoInfo = disco.discoverInfo(connection.getServiceName());
-            Iterator<DiscoverInfo.Identity> iter = discoInfo.getIdentities();
-            while (iter.hasNext()) {
-                DiscoverInfo.Identity identity = iter.next();
-                if ((identity.getName() != null) && (identity.getName().startsWith("rtpbridge"))) {
-					return true;
-				}
+        DiscoverInfo discoInfo = disco.discoverInfo(connection.getServiceName());
+        for (DiscoverInfo.Identity identity : discoInfo.getIdentities()) {
+            if ((identity.getName() != null) && (identity.getName().startsWith("rtpbridge"))) {
+                return true;
             }
-       }
-        catch (XMPPException e) {
-            e.printStackTrace();
         }
 
         return false;
@@ -456,9 +447,10 @@ public class RTPBridge extends IQ {
      * Check if the server support RTPBridge Service.
      *
      * @param connection
-     * @return
+     * @return the RTPBridge
+     * @throws NotConnectedException 
      */
-    public static RTPBridge relaySession(Connection connection, String sessionID, String pass, TransportCandidate proxyCandidate, TransportCandidate localCandidate) {
+    public static RTPBridge relaySession(XMPPConnection connection, String sessionID, String pass, TransportCandidate proxyCandidate, TransportCandidate localCandidate) throws NotConnectedException {
 
         if (!connection.isConnected()) {
             return null;
@@ -476,10 +468,7 @@ public class RTPBridge extends IQ {
 
         // LOGGER.debug("Relayed to: " + candidate.getIp() + ":" + candidate.getPort());
 
-        PacketCollector collector = connection
-                .createPacketCollector(new PacketIDFilter(rtpPacket.getPacketID()));
-
-        connection.sendPacket(rtpPacket);
+        PacketCollector collector = connection.createPacketCollectorAndSend(rtpPacket);
 
         RTPBridge response = (RTPBridge) collector.nextResult();
 
@@ -494,8 +483,9 @@ public class RTPBridge extends IQ {
      *
      * @param xmppConnection
      * @return public IP String or null if not found
+     * @throws NotConnectedException 
      */
-    public static String getPublicIP(Connection xmppConnection) {
+    public static String getPublicIP(XMPPConnection xmppConnection) throws NotConnectedException {
 
         if (!xmppConnection.isConnected()) {
             return null;
@@ -507,10 +497,7 @@ public class RTPBridge extends IQ {
 
         // LOGGER.debug("Relayed to: " + candidate.getIp() + ":" + candidate.getPort());
 
-        PacketCollector collector = xmppConnection
-                .createPacketCollector(new PacketIDFilter(rtpPacket.getPacketID()));
-
-        xmppConnection.sendPacket(rtpPacket);
+        PacketCollector collector = xmppConnection.createPacketCollectorAndSend(rtpPacket);
 
         RTPBridge response = (RTPBridge) collector.nextResult();
 

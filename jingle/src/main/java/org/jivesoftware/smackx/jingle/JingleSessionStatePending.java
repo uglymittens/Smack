@@ -16,9 +16,8 @@
  */
 package org.jivesoftware.smackx.jingle;
 
-import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.packet.IQ;
-import org.jivesoftware.smackx.packet.Jingle;
+import org.jivesoftware.smackx.jingle.packet.Jingle;
 
 /**
  *  @author Jeff Williams
@@ -124,7 +123,7 @@ public class JingleSessionStatePending extends JingleSessionState {
 
         try {
             session.terminate("Closed remotely");
-        } catch (XMPPException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
 

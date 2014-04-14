@@ -17,7 +17,9 @@
  */
 package org.jivesoftware.smack;
 
+import org.jivesoftware.smack.XMPPException.StreamErrorException;
 import org.jivesoftware.smack.packet.StreamError;
+
 import java.util.Random;
 /**
  * Handles the automatic reconnection process. Every time a connection is dropped without
@@ -33,10 +35,11 @@ import java.util.Random;
  *
  * @author Francisco Vives
  */
-public class ReconnectionManager implements ConnectionListener {
-
+public class ReconnectionManager extends AbstractConnectionListener {
+    private static final Logger LOGGER = Logger.getLogger(ReconnectionManager.class.getName());
+    
     // Holds the connection to the server
-    private Connection connection;
+    private XMPPConnection connection;
     private Thread reconnectionThread;
     private int randomBase = new Random().nextInt(11) + 5; // between 5 and 15 seconds
     
@@ -47,14 +50,14 @@ public class ReconnectionManager implements ConnectionListener {
         // Create a new PrivacyListManager on every established connection. In the init()
         // method of PrivacyListManager, we'll add a listener that will delete the
         // instance when the connection is closed.
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 connection.addConnectionListener(new ReconnectionManager(connection));
             }
         });
     }
 
-    private ReconnectionManager(Connection connection) {
+    private ReconnectionManager(XMPPConnection connection) {
         this.connection = connection;
     }
 
@@ -65,7 +68,7 @@ public class ReconnectionManager implements ConnectionListener {
      */
     private boolean isReconnectionAllowed() {
         return !done && !connection.isConnected()
-                && connection.isReconnectionAllowed();
+                && connection.getConfiguration().isReconnectionAllowed();
     }
 
     /**
@@ -111,8 +114,8 @@ public class ReconnectionManager implements ConnectionListener {
                  */
                 public void run() {
                     // The process will try to reconnect until the connection is established or
-                    // the user cancel the reconnection process {@link Connection#disconnect()}
-                    while (true) {
+                    // the user cancel the reconnection process {@link XMPPConnection#disconnect()}
+                    while (ReconnectionManager.this.isReconnectionAllowed()) {
                         // Find how much time we should wait until the next reconnection
                         int remainingSeconds = timeDelay();
                         // Sleep until we're ready for the next reconnection attempt. Notify
@@ -137,7 +140,7 @@ public class ReconnectionManager implements ConnectionListener {
                         try {
                             connection.connect();
                         }
-                        catch (XMPPException e) {
+                        catch (Exception e) {
                             // Fires the failed reconnection notification
                             e.printStackTrace();
                             ReconnectionManager.this.notifyReconnectionFailed(e);
@@ -165,7 +168,7 @@ public class ReconnectionManager implements ConnectionListener {
     }
 
     /**
-     * Fires listeners when The Connection will retry a reconnection. Expressed in seconds.
+     * Fires listeners when The XMPPConnection will retry a reconnection. Expressed in seconds.
      *
      * @param seconds the number of seconds that a reconnection will be attempted in.
      */
@@ -177,23 +180,21 @@ public class ReconnectionManager implements ConnectionListener {
         }
     }
 
+    @Override
     public void connectionClosed() {
         done = true;
     }
 
+    @Override
     public void connectionClosedOnError(Exception e) {
         done = false;
-        if (e instanceof XMPPException) {
-            XMPPException xmppEx = (XMPPException) e;
+        if (e instanceof StreamErrorException) {
+            StreamErrorException xmppEx = (StreamErrorException) e;
             StreamError error = xmppEx.getStreamError();
+            String reason = error.getCode();
 
-            // Make sure the error is not null
-            if (error != null) {
-                String reason = error.getCode();
-
-                if ("conflict".equals(reason)) {
-                    return;
-                }
+            if ("conflict".equals(reason)) {
+                return;
             }
         }
 
@@ -201,20 +202,4 @@ public class ReconnectionManager implements ConnectionListener {
             this.reconnect();
         }
     }
-
-    public void reconnectingIn(int seconds) {
-        // ignore
-    }
-
-    public void reconnectionFailed(Exception e) {
-        // ignore
-    }
-
-    /**
-     * The connection has successfull gotten connected.
-     */
-    public void reconnectionSuccessful() {
-        // ignore
-    }
-
 }

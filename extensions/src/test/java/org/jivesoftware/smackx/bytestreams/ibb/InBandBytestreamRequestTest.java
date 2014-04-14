@@ -19,7 +19,8 @@ package org.jivesoftware.smackx.bytestreams.ibb;
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.XMPPError;
 import org.jivesoftware.smackx.bytestreams.ibb.InBandBytestreamManager;
@@ -41,7 +42,7 @@ public class InBandBytestreamRequestTest {
     String targetJID = "target@xmpp-server/Smack";
     String sessionID = "session_id";
 
-    Connection connection;
+    XMPPConnection connection;
     InBandBytestreamManager byteStreamManager;
     Open initBytestream;
 
@@ -52,7 +53,7 @@ public class InBandBytestreamRequestTest {
     public void setup() {
 
         // mock connection
-        connection = mock(Connection.class);
+        connection = mock(XMPPConnection.class);
 
         // initialize InBandBytestreamManager to get the InitiationListener
         byteStreamManager = InBandBytestreamManager.getByteStreamManager(connection);
@@ -66,9 +67,10 @@ public class InBandBytestreamRequestTest {
 
     /**
      * Test reject() method.
+     * @throws NotConnectedException 
      */
     @Test
-    public void shouldReplyWithErrorIfRequestIsRejected() {
+    public void shouldReplyWithErrorIfRequestIsRejected() throws NotConnectedException {
         InBandBytestreamRequest ibbRequest = new InBandBytestreamRequest(
                         byteStreamManager, initBytestream);
 

@@ -20,9 +20,11 @@ import static org.mockito.Matchers.*;
 import static org.mockito.Mockito.*;
 
 import org.jivesoftware.smack.PacketCollector;
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.PacketFilter;
+import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.XMPPError;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
@@ -56,13 +58,14 @@ public class ConnectionUtils {
      * @param initiatorJID the user associated to the XMPP connection
      * @param xmppServer the XMPP server associated to the XMPP connection
      * @return a mocked XMPP connection
-     * @throws XMPPException 
+     * @throws SmackException 
+     * @throws XMPPErrorException 
      */
-    public static Connection createMockedConnection(final Protocol protocol,
-                    String initiatorJID, String xmppServer) throws XMPPException {
+    public static XMPPConnection createMockedConnection(final Protocol protocol,
+                    String initiatorJID, String xmppServer) throws SmackException, XMPPErrorException {
 
         // mock XMPP connection
-        Connection connection = mock(Connection.class);
+        XMPPConnection connection = mock(XMPPConnection.class);
         when(connection.getUser()).thenReturn(initiatorJID);
         when(connection.getServiceName()).thenReturn(xmppServer);
 
@@ -79,7 +82,7 @@ public class ConnectionUtils {
             }
 
         };
-        when(connection.createPacketCollectorAndSend(isA(Packet.class))).thenAnswer(collectorAndSend);
+        when(connection.createPacketCollectorAndSend(isA(IQ.class))).thenAnswer(collectorAndSend);
 
         // mock send method
         Answer<Object> addIncoming = new Answer<Object>() {
@@ -104,7 +107,7 @@ public class ConnectionUtils {
                 Packet packet = protocol.getResponses().poll();
                 if (packet == null) return packet;
                 XMPPError xmppError = packet.getError();
-                if (xmppError != null) throw new XMPPException(xmppError);
+                if (xmppError != null) throw new XMPPErrorException(xmppError);
                 return packet;
             }
         };

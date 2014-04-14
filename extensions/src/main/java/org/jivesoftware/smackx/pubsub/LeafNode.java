@@ -20,8 +20,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ.Type;
 import org.jivesoftware.smackx.disco.packet.DiscoverItems;
 import org.jivesoftware.smackx.pubsub.packet.PubSub;
@@ -36,7 +38,7 @@ import org.jivesoftware.smackx.pubsub.packet.PubSub;
  */
 public class LeafNode extends Node
 {
-	LeafNode(Connection connection, String nodeName)
+	LeafNode(XMPPConnection connection, String nodeName)
 	{
 		super(connection, nodeName);
 	}
@@ -46,11 +48,11 @@ public class LeafNode extends Node
 	 * {@link DiscoverItems} format.
 	 * 
 	 * @return The item details in {@link DiscoverItems} format
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
-	public DiscoverItems discoverItems()
-		throws XMPPException
+	public DiscoverItems discoverItems() throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		DiscoverItems items = new DiscoverItems();
 		items.setTo(to);
@@ -62,12 +64,12 @@ public class LeafNode extends Node
 	 * Get the current items stored in the node.
 	 * 
 	 * @return List of {@link Item} in the node
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> List<T> getItems()
-		throws XMPPException
+	public <T extends Item> List<T> getItems() throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub request = createPubsubPacket(Type.GET, new GetItemsRequest(getId()));
 		
@@ -84,12 +86,12 @@ public class LeafNode extends Node
 	 * @param subscriptionId -  The subscription id for the 
 	 * associated subscription.
 	 * @return List of {@link Item} in the node
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> List<T> getItems(String subscriptionId)
-		throws XMPPException
+	public <T extends Item> List<T> getItems(String subscriptionId) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub request = createPubsubPacket(Type.GET, new GetItemsRequest(getId(), subscriptionId));
 		
@@ -108,12 +110,12 @@ public class LeafNode extends Node
 	 * @param ids Item ids of the items to retrieve
 	 * 
 	 * @return The list of {@link Item} with payload
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> List<T> getItems(Collection<String> ids)
-		throws XMPPException
+	public <T extends Item> List<T> getItems(Collection<String> ids) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		List<Item> itemList = new ArrayList<Item>(ids.size());
 		
@@ -134,12 +136,12 @@ public class LeafNode extends Node
 	 * @param maxItems Maximum number of items to return
 	 * 
 	 * @return List of {@link Item}
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> List<T> getItems(int maxItems)
-		throws XMPPException
+	public <T extends Item> List<T> getItems(int maxItems) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub request = createPubsubPacket(Type.GET, new GetItemsRequest(getId(), maxItems));
 		
@@ -157,12 +159,12 @@ public class LeafNode extends Node
 	 * on.
 	 * 
 	 * @return List of {@link Item}
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> List<T> getItems(int maxItems, String subscriptionId)
-		throws XMPPException
+	public <T extends Item> List<T> getItems(int maxItems, String subscriptionId) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub request = createPubsubPacket(Type.GET, new GetItemsRequest(getId(), subscriptionId, maxItems));
 		
@@ -182,8 +184,9 @@ public class LeafNode extends Node
 	 * packet has been sent.
 	 * 
 	 * For synchronous calls use {@link #send() send()}.
+	 * @throws NotConnectedException 
 	 */
-	public void publish()
+	public void publish() throws NotConnectedException
 	{
 		PubSub packet = createPubsubPacket(Type.SET, new NodeExtension(PubSubElementType.PUBLISH, getId()));
 		
@@ -204,9 +207,10 @@ public class LeafNode extends Node
 	 * For synchronous calls use {@link #send(Item) send(Item))}.
 	 * 
 	 * @param item - The item being sent
+	 * @throws NotConnectedException 
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> void publish(T item)
+	public <T extends Item> void publish(T item) throws NotConnectedException
 	{
 		Collection<T> items = new ArrayList<T>(1);
 		items.add((T)(item == null ? new Item() : item));
@@ -225,8 +229,9 @@ public class LeafNode extends Node
 	 * For synchronous calls use {@link #send(Collection) send(Collection))}.
 	 * 
 	 * @param items - The collection of items being sent
+	 * @throws NotConnectedException 
 	 */
-	public <T extends Item> void publish(Collection<T> items)
+	public <T extends Item> void publish(Collection<T> items) throws NotConnectedException
 	{
 		PubSub packet = createPubsubPacket(Type.SET, new PublishItem<T>(getId(), items));
 		
@@ -244,11 +249,12 @@ public class LeafNode extends Node
 	 * on failure.
 	 * 
 	 * For asynchronous calls, use {@link #publish() publish()}.
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException 
+	 * @throws NotConnectedException 
 	 * 
-	 * @throws XMPPException
 	 */
-	public void send()
-		throws XMPPException
+	public void send() throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub packet = createPubsubPacket(Type.SET, new NodeExtension(PubSubElementType.PUBLISH, getId()));
 		
@@ -273,12 +279,13 @@ public class LeafNode extends Node
 	 * For asynchronous calls, use {@link #publish(Item) publish(Item)}.
 	 * 
 	 * @param item - The item being sent
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException 
+	 * @throws NotConnectedException 
 	 * 
-	 * @throws XMPPException
 	 */
 	@SuppressWarnings("unchecked")
-	public <T extends Item> void send(T item)
-		throws XMPPException
+	public <T extends Item> void send(T item) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		Collection<T> items = new ArrayList<T>(1);
 		items.add((item == null ? (T)new Item() : item));
@@ -297,11 +304,12 @@ public class LeafNode extends Node
 	 * For asynchronous calls, use {@link #publish(Collection) publish(Collection))}.
 	 * 
 	 * @param items - The collection of {@link Item} objects being sent
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException 
+	 * @throws NotConnectedException 
 	 * 
-	 * @throws XMPPException
 	 */
-	public <T extends Item> void send(Collection<T> items)
-		throws XMPPException
+	public <T extends Item> void send(Collection<T> items) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub packet = createPubsubPacket(Type.SET, new PublishItem<T>(getId(), items));
 		
@@ -313,11 +321,11 @@ public class LeafNode extends Node
 	 *   
 	 * <p>Note: Some implementations may keep the last item
 	 * sent.
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
-	public void deleteAllItems()
-		throws XMPPException
+	public void deleteAllItems() throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		PubSub request = createPubsubPacket(Type.SET, new NodeExtension(PubSubElementType.PURGE_OWNER, getId()), PubSubElementType.PURGE_OWNER.getNamespace());
 		
@@ -328,11 +336,11 @@ public class LeafNode extends Node
 	 * Delete the item with the specified id from the node.
 	 * 
 	 * @param itemId The id of the item
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException 
+	 * @throws NoResponseException 
+	 * @throws NotConnectedException 
 	 */
-	public void deleteItem(String itemId)
-		throws XMPPException
+	public void deleteItem(String itemId) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		Collection<String> items = new ArrayList<String>(1);
 		items.add(itemId);
@@ -343,11 +351,11 @@ public class LeafNode extends Node
 	 * Delete the items with the specified id's from the node.
 	 * 
 	 * @param itemIds The list of id's of items to delete
-	 * 
-	 * @throws XMPPException
+	 * @throws XMPPErrorException
+	 * @throws NoResponseException if there was no response from the server.
+	 * @throws NotConnectedException 
 	 */
-	public void deleteItem(Collection<String> itemIds)
-		throws XMPPException
+	public void deleteItem(Collection<String> itemIds) throws NoResponseException, XMPPErrorException, NotConnectedException
 	{
 		List<Item> items = new ArrayList<Item>(itemIds.size());
 		

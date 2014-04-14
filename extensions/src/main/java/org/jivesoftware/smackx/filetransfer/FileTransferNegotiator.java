@@ -21,17 +21,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.ConnectionListener;
+import org.jivesoftware.smack.AbstractConnectionListener;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.PacketCollector;
-import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.filter.PacketIDFilter;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.XMPPError;
@@ -59,8 +58,8 @@ public class FileTransferNegotiator {
             "http://jabber.org/protocol/si/profile/file-transfer",
             "http://jabber.org/protocol/si"};
 
-    private static final Map<Connection, FileTransferNegotiator> transferObject =
-            new ConcurrentHashMap<Connection, FileTransferNegotiator>();
+    private static final Map<XMPPConnection, FileTransferNegotiator> transferObject =
+            new ConcurrentHashMap<XMPPConnection, FileTransferNegotiator>();
 
     private static final String STREAM_INIT_PREFIX = "jsi_";
 
@@ -84,9 +83,9 @@ public class FileTransferNegotiator {
      * @return The IMFileTransferManager
      */
     public static FileTransferNegotiator getInstanceFor(
-            final Connection connection) {
+            final XMPPConnection connection) {
         if (connection == null) {
-            throw new IllegalArgumentException("Connection cannot be null");
+            throw new IllegalArgumentException("XMPPConnection cannot be null");
         }
         if (!connection.isConnected()) {
             return null;
@@ -111,7 +110,7 @@ public class FileTransferNegotiator {
      * @param connection The connection on which to enable or disable the services.
      * @param isEnabled  True to enable, false to disable.
      */
-    public static void setServiceEnabled(final Connection connection,
+    public static void setServiceEnabled(final XMPPConnection connection,
             final boolean isEnabled) {
         ServiceDiscoveryManager manager = ServiceDiscoveryManager
                 .getInstanceFor(connection);
@@ -142,7 +141,7 @@ public class FileTransferNegotiator {
      * @param connection The connection to check
      * @return True if all related services are enabled, false if they are not.
      */
-    public static boolean isServiceEnabled(final Connection connection) {
+    public static boolean isServiceEnabled(final XMPPConnection connection) {
         ServiceDiscoveryManager manager = ServiceDiscoveryManager
                 .getInstanceFor(connection);
 
@@ -201,13 +200,13 @@ public class FileTransferNegotiator {
 
     // non-static
 
-    private final Connection connection;
+    private final XMPPConnection connection;
 
     private final StreamNegotiator byteStreamTransferManager;
 
     private final StreamNegotiator inbandTransferManager;
 
-    private FileTransferNegotiator(final Connection connection) {
+    private FileTransferNegotiator(final XMPPConnection connection) {
         configureConnection(connection);
 
         this.connection = connection;
@@ -215,31 +214,21 @@ public class FileTransferNegotiator {
         inbandTransferManager = new IBBTransferNegotiator(connection);
     }
 
-    private void configureConnection(final Connection connection) {
-        connection.addConnectionListener(new ConnectionListener() {
+    private void configureConnection(final XMPPConnection connection) {
+        connection.addConnectionListener(new AbstractConnectionListener() {
+            @Override
             public void connectionClosed() {
                 cleanup(connection);
             }
 
+            @Override
             public void connectionClosedOnError(Exception e) {
                 cleanup(connection);
-            }
-
-            public void reconnectionFailed(Exception e) {
-                // ignore
-            }
-
-            public void reconnectionSuccessful() {
-                // ignore
-            }
-
-            public void reconnectingIn(int seconds) {
-                // ignore
             }
         });
     }
 
-    private void cleanup(final Connection connection) {
+    private void cleanup(final XMPPConnection connection) {
         if (transferObject.remove(connection) != null) {
             inbandTransferManager.cleanup();
         }
@@ -250,11 +239,12 @@ public class FileTransferNegotiator {
      *
      * @param request The related file transfer request.
      * @return The file transfer object that handles the transfer
-     * @throws XMPPException If there are either no stream methods contained in the packet, or
+     * @throws XMPPErrorException If there are either no stream methods contained in the packet, or
      *                       there is not an appropriate stream method.
+     * @throws NotConnectedException 
      */
     public StreamNegotiator selectStreamNegotiator(
-            FileTransferRequest request) throws XMPPException {
+            FileTransferRequest request) throws XMPPErrorException, NotConnectedException {
         StreamInitiation si = request.getStreamInitiation();
         FormField streamMethodField = getStreamMethodField(si
                 .getFeatureNegotiationForm());
@@ -266,7 +256,7 @@ public class FileTransferNegotiator {
                     IQ.Type.ERROR);
             iqPacket.setError(error);
             connection.sendPacket(iqPacket);
-            throw new XMPPException(errorMessage, error);
+            throw new XMPPErrorException(errorMessage, error);
         }
 
         // select the appropriate protocol
@@ -275,7 +265,7 @@ public class FileTransferNegotiator {
         try {
             selectedStreamNegotiator = getNegotiator(streamMethodField);
         }
-        catch (XMPPException e) {
+        catch (XMPPErrorException e) {
             IQ iqPacket = createIQ(si.getPacketID(), si.getFrom(), si.getTo(),
                     IQ.Type.ERROR);
             iqPacket.setError(e.getXMPPError());
@@ -289,24 +279,21 @@ public class FileTransferNegotiator {
     }
 
     private FormField getStreamMethodField(DataForm form) {
-        FormField field = null;
-        for (Iterator<FormField> it = form.getFields(); it.hasNext();) {
-            field = it.next();
+        for (FormField field : form.getFields()) {
             if (field.getVariable().equals(STREAM_DATA_FIELD_NAME)) {
-                break;
+                return field;
             }
-            field = null;
         }
-        return field;
+        return null;
     }
 
     private StreamNegotiator getNegotiator(final FormField field)
-            throws XMPPException {
+            throws XMPPErrorException {
         String variable;
         boolean isByteStream = false;
         boolean isIBB = false;
-        for (Iterator<FormField.Option> it = field.getOptions(); it.hasNext();) {
-            variable = it.next().getValue();
+        for (FormField.Option option : field.getOptions()) {
+            variable = option.getValue();
             if (variable.equals(Socks5BytestreamManager.NAMESPACE) && !IBB_ONLY) {
                 isByteStream = true;
             }
@@ -318,7 +305,7 @@ public class FileTransferNegotiator {
         if (!isByteStream && !isIBB) {
             XMPPError error = new XMPPError(XMPPError.Condition.bad_request,
                     "No acceptable transfer mechanism");
-            throw new XMPPException(error.getMessage(), error);
+            throw new XMPPErrorException(error);
         }
 
        //if (isByteStream && isIBB && field.getType().equals(FormField.TYPE_LIST_MULTI)) {
@@ -339,8 +326,9 @@ public class FileTransferNegotiator {
      * Reject a stream initiation request from a remote user.
      *
      * @param si The Stream Initiation request to reject.
+     * @throws NotConnectedException 
      */
-    public void rejectStream(final StreamInitiation si) {
+    public void rejectStream(final StreamInitiation si) throws NotConnectedException {
         XMPPError error = new XMPPError(XMPPError.Condition.forbidden, "Offer Declined");
         IQ iqPacket = createIQ(si.getPacketID(), si.getFrom(), si.getTo(),
                 IQ.Type.ERROR);
@@ -390,11 +378,12 @@ public class FileTransferNegotiator {
      * @param responseTimeout The amount of time, in milliseconds, to wait for the remote
      *                        user to respond. If they do not respond in time, this
      * @return Returns the stream negotiator selected by the peer.
-     * @throws XMPPException Thrown if there is an error negotiating the file transfer.
+     * @throws XMPPErrorException Thrown if there is an error negotiating the file transfer.
+     * @throws NotConnectedException 
      */
     public StreamNegotiator negotiateOutgoingTransfer(final String userID,
             final String streamID, final String fileName, final long size,
-            final String desc, int responseTimeout) throws XMPPException {
+            final String desc, int responseTimeout) throws XMPPErrorException, NotConnectedException {
         StreamInitiation si = new StreamInitiation();
         si.setSessionID(streamID);
         si.setMimeType(URLConnection.guessContentTypeFromName(fileName));
@@ -409,9 +398,7 @@ public class FileTransferNegotiator {
         si.setTo(userID);
         si.setType(IQ.Type.SET);
 
-        PacketCollector collector = connection
-                .createPacketCollector(new PacketIDFilter(si.getPacketID()));
-        connection.sendPacket(si);
+        PacketCollector collector = connection.createPacketCollectorAndSend(si);
         Packet siResponse = collector.nextResult(responseTimeout);
         collector.cancel();
 
@@ -423,11 +410,8 @@ public class FileTransferNegotiator {
                         .getFeatureNegotiationForm()));
 
             }
-            else if (iqResponse.getType().equals(IQ.Type.ERROR)) {
-                throw new XMPPException(iqResponse.getError());
-            }
             else {
-                throw new XMPPException("File transfer response unreadable");
+                throw new XMPPErrorException(iqResponse.getError());
             }
         }
         else {
@@ -436,12 +420,10 @@ public class FileTransferNegotiator {
     }
 
     private StreamNegotiator getOutgoingNegotiator(final FormField field)
-            throws XMPPException {
-        String variable;
+            throws XMPPErrorException {
         boolean isByteStream = false;
         boolean isIBB = false;
-        for (Iterator<String> it = field.getValues(); it.hasNext();) {
-            variable = it.next();
+        for (String variable : field.getValues()) {
             if (variable.equals(Socks5BytestreamManager.NAMESPACE) && !IBB_ONLY) {
                 isByteStream = true;
             }
@@ -453,7 +435,7 @@ public class FileTransferNegotiator {
         if (!isByteStream && !isIBB) {
             XMPPError error = new XMPPError(XMPPError.Condition.bad_request,
                     "No acceptable transfer mechanism");
-            throw new XMPPException(error.getMessage(), error);
+            throw new XMPPErrorException(error);
         }
 
         if (isByteStream && isIBB) {

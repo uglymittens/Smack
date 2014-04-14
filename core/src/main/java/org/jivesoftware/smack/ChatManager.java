@@ -19,21 +19,22 @@ package org.jivesoftware.smack;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.filter.AndFilter;
-import org.jivesoftware.smack.filter.FromContainsFilter;
+import org.jivesoftware.smack.filter.FromMatchesFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.filter.ThreadFilter;
 import org.jivesoftware.smack.packet.Message;
-import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.Message.Type;
+import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.util.StringUtils;
-import org.jivesoftware.smack.util.collections.ReferenceMap;
 
 /**
  * The chat manager keeps track of references to all current chats. It will not hold any references
@@ -42,18 +43,33 @@ import org.jivesoftware.smack.util.collections.ReferenceMap;
  *
  * @author Alexander Wenckus
  */
-public class ChatManager {
-    /*
+public class ChatManager extends Manager{
+    private static final Map<XMPPConnection, ChatManager> INSTANCES = new WeakHashMap<XMPPConnection, ChatManager>();
+
+    /**
      * Sets the default behaviour for allowing 'normal' messages to be used in chats. As some clients don't set
      * the message type to chat, the type normal has to be accepted to allow chats with these clients.
      */
     private static boolean defaultIsNormalInclude = true;
-    
-    /*
+
+    /**
      * Sets the default behaviour for how to match chats when there is NO thread id in the incoming message.
      */
     private static MatchMode defaultMatchMode = MatchMode.BARE_JID;
-    
+
+    /**
+     * Returns the ChatManager instance associated with a given XMPPConnection.
+     *
+     * @param connection the connection used to look for the proper ServiceDiscoveryManager.
+     * @return the ChatManager associated with a given XMPPConnection.
+     */
+    public static synchronized ChatManager getInstanceFor(XMPPConnection connection) {
+        ChatManager manager = INSTANCES.get(connection);
+        if (manager == null)
+            manager = new ChatManager(connection);
+        return manager;
+    }
+
     /**
      * Defines the different modes under which a match will be attempted with an existing chat when
      * the incoming message does not have a thread id.
@@ -74,33 +90,30 @@ public class ChatManager {
         BARE_JID; 
     }
     
-    /*
+    /**
      * Determines whether incoming messages of type normal can create chats. 
      */
     private boolean normalIncluded = defaultIsNormalInclude;
-    
-    /*
+
+    /**
      * Determines how incoming message with no thread will be matched to existing chats.
      */
     private MatchMode matchMode = defaultMatchMode;
-    
+
     /**
      * Maps thread ID to chat.
      */
-    private Map<String, Chat> threadChats = Collections.synchronizedMap(new ReferenceMap<String, Chat>(ReferenceMap.HARD,
-            ReferenceMap.WEAK));
+    private Map<String, Chat> threadChats = Collections.synchronizedMap(new HashMap<String, Chat>());
 
     /**
      * Maps jids to chats
      */
-    private Map<String, Chat> jidChats = Collections.synchronizedMap(new ReferenceMap<String, Chat>(ReferenceMap.HARD,
-            ReferenceMap.WEAK));
+    private Map<String, Chat> jidChats = Collections.synchronizedMap(new HashMap<String, Chat>());
 
     /**
      * Maps base jids to chats
      */
-    private Map<String, Chat> baseJidChats = Collections.synchronizedMap(new ReferenceMap<String, Chat>(ReferenceMap.HARD,
-	    ReferenceMap.WEAK));
+    private Map<String, Chat> baseJidChats = Collections.synchronizedMap(new HashMap<String, Chat>());
 
     private Set<ChatManagerListener> chatManagerListeners
             = new CopyOnWriteArraySet<ChatManagerListener>();
@@ -108,10 +121,8 @@ public class ChatManager {
     private Map<PacketInterceptor, PacketFilter> interceptors
             = new WeakHashMap<PacketInterceptor, PacketFilter>();
 
-    private Connection connection;
-
-    ChatManager(Connection connection) {
-        this.connection = connection;
+    private ChatManager(XMPPConnection connection) {
+        super(connection);
 
         PacketFilter filter = new PacketFilter() {
             public boolean accept(Packet packet) {
@@ -139,9 +150,13 @@ public class ChatManager {
                 if(chat == null) {
                     chat = createChat(message);
                 }
+                // The chat could not be created, abort here
+                if (chat == null)
+                    return;
                 deliverMessage(chat, message);
             }
         }, filter);
+        INSTANCES.put(connection, this);
     }
 
     /**
@@ -227,12 +242,31 @@ public class ChatManager {
         return chat;
     }
 
+    void closeChat(Chat chat) {
+        threadChats.remove(chat.getThreadID());
+        String userJID = chat.getParticipant();
+        jidChats.remove(userJID);
+        baseJidChats.remove(StringUtils.parseBareAddress(userJID));
+    }
+
+    /**
+     * Creates a new {@link Chat} based on the message. May returns null if no chat could be
+     * created, e.g. because the message comes without from.
+     *
+     * @param message
+     * @return a Chat or null if none can be created
+     */
     private Chat createChat(Message message) {
+        String userJID = message.getFrom();
+        // According to RFC6120 8.1.2.1 4. messages without a 'from' attribute are valid, but they
+        // are of no use in this case for ChatManager
+        if (userJID == null) {
+            return null;
+        }
         String threadID = message.getThread();
         if(threadID == null) {
             threadID = nextID();
         }
-        String userJID = message.getFrom();
 
         return createChat(userJID, threadID, false);
     }
@@ -250,7 +284,11 @@ public class ChatManager {
         if (matchMode == MatchMode.NONE) {
             return null;
         }
-        
+        // According to RFC6120 8.1.2.1 4. messages without a 'from' attribute are valid, but they
+        // are of no use in this case for ChatManager
+        if (userJID == null) {
+            return null;
+        }
         Chat match = jidChats.get(userJID);
 	
         if (match == null && (matchMode == MatchMode.BARE_JID)) {
@@ -297,7 +335,7 @@ public class ChatManager {
         chat.deliver(message);
     }
 
-    void sendMessage(Chat chat, Message message) {
+    void sendMessage(Chat chat, Message message) throws NotConnectedException {
         for(Map.Entry<PacketInterceptor, PacketFilter> interceptor : interceptors.entrySet()) {
             PacketFilter filter = interceptor.getValue();
             if(filter != null && filter.accept(message)) {
@@ -306,14 +344,14 @@ public class ChatManager {
         }
         // Ensure that messages being sent have a proper FROM value
         if (message.getFrom() == null) {
-            message.setFrom(connection.getUser());
+            message.setFrom(connection().getUser());
         }
-        connection.sendPacket(message);
+        connection().sendPacket(message);
     }
 
     PacketCollector createPacketCollector(Chat chat) {
-        return connection.createPacketCollector(new AndFilter(new ThreadFilter(chat.getThreadID()), 
-                new FromContainsFilter(chat.getParticipant())));
+        return connection().createPacketCollector(new AndFilter(new ThreadFilter(chat.getThreadID()), 
+                        FromMatchesFilter.create(chat.getParticipant())));
     }
 
     /**

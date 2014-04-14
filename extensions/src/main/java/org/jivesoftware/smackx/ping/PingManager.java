@@ -16,7 +16,6 @@
  */
 package org.jivesoftware.smackx.ping;
 
-import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
@@ -24,14 +23,19 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.AbstractConnectionListener;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.ConnectionCreationListener;
-import org.jivesoftware.smack.ConnectionListener;
+import org.jivesoftware.smack.Manager;
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.SmackError;
 import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.AndFilter;
 import org.jivesoftware.smack.filter.IQTypeFilter;
 import org.jivesoftware.smack.filter.PacketFilter;
@@ -39,7 +43,6 @@ import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.IQ.Type;
 import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
-import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
 import org.jivesoftware.smackx.ping.packet.Ping;
 import org.jivesoftware.smackx.ping.packet.Pong;
 
@@ -52,34 +55,34 @@ import org.jivesoftware.smackx.ping.packet.Pong;
  * @author Florian Schmaus
  * @see <a href="http://www.xmpp.org/extensions/xep-0199.html">XEP-0199:XMPP Ping</a>
  */
-public class PingManager {
+public class PingManager extends Manager {
     public static final String NAMESPACE = "urn:xmpp:ping";
 
     private static final Logger LOGGER = Logger.getLogger(PingManager.class.getName());
 
-    private static final Map<Connection, PingManager> INSTANCES = Collections
-            .synchronizedMap(new WeakHashMap<Connection, PingManager>());
+    private static final Map<XMPPConnection, PingManager> INSTANCES = Collections
+            .synchronizedMap(new WeakHashMap<XMPPConnection, PingManager>());
 
     private static final PacketFilter PING_PACKET_FILTER = new AndFilter(
                     new PacketTypeFilter(Ping.class), new IQTypeFilter(Type.GET));
 
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(XMPPConnection connection) {
                 getInstanceFor(connection);
             }
         });
     }
 
     /**
-     * Retrieves a {@link PingManager} for the specified {@link Connection}, creating one if it doesn't already
+     * Retrieves a {@link PingManager} for the specified {@link XMPPConnection}, creating one if it doesn't already
      * exist.
      * 
      * @param connection
      * The connection the manager is attached to.
      * @return The new or existing manager.
      */
-    public synchronized static PingManager getInstanceFor(Connection connection) {
+    public synchronized static PingManager getInstanceFor(XMPPConnection connection) {
         PingManager pingManager = INSTANCES.get(connection);
         if (pingManager == null) {
             pingManager = new PingManager(connection);
@@ -118,10 +121,8 @@ public class PingManager {
      */
     private long lastSuccessfulManualPing = -1;
 
-    private WeakReference<Connection> weakRefConnection;
-
-    private PingManager(Connection connection) {
-        weakRefConnection = new WeakReference<Connection>(connection);
+    private PingManager(XMPPConnection connection) {
+        super(connection);
         ServiceDiscoveryManager sdm = ServiceDiscoveryManager.getInstanceFor(connection);
         sdm.addFeature(PingManager.NAMESPACE);
         INSTANCES.put(connection, this);
@@ -129,13 +130,16 @@ public class PingManager {
         connection.addPacketListener(new PacketListener() {
             // Send a Pong for every Ping
             @Override
-            public void processPacket(Packet packet) {
-                Connection connection = weakRefConnection.get();
+            public void processPacket(Packet packet) throws NotConnectedException {
                 Pong pong = new Pong(packet);
-                connection.sendPacket(pong);
+                connection().sendPacket(pong);
             }
         }, PING_PACKET_FILTER);
-        connection.addConnectionListener(new ConnectionListener() {
+        connection.addConnectionListener(new AbstractConnectionListener() {
+            @Override
+            public void authenticated(XMPPConnection connection) {
+                maybeSchedulePingServerTask();
+            }
             @Override
             public void connectionClosed() {
                 maybeStopPingServerTask();
@@ -144,14 +148,6 @@ public class PingManager {
             public void connectionClosedOnError(Exception arg0) {
                 maybeStopPingServerTask();
             }
-            @Override
-            public void reconnectionSuccessful() {
-                maybeSchedulePingServerTask();
-            }
-            @Override
-            public void reconnectingIn(int seconds) {}
-            @Override
-            public void reconnectionFailed(Exception e) {}
         });
         maybeSchedulePingServerTask();
     }
@@ -167,15 +163,16 @@ public class PingManager {
      * @param jid The id of the entity the ping is being sent to
      * @param pingTimeout The time to wait for a reply
      * @return true if a reply was received from the entity, false otherwise.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public boolean ping(String jid, long pingTimeout) {
+    public boolean ping(String jid, long pingTimeout) throws NoResponseException, NotConnectedException {
         Ping ping = new Ping(jid);
-        Connection connection = weakRefConnection.get();
         try {
-            connection.createPacketCollectorAndSend(ping).nextResultOrThrow();
+            connection().createPacketCollectorAndSend(ping).nextResultOrThrow();
         }
         catch (XMPPException exc) {
-            return (jid.equals(connection.getServiceName()) && (exc.getSmackError() != SmackError.NO_RESPONSE_FROM_SERVER));
+            return jid.equals(connection().getServiceName());
         }
         return true;
     }
@@ -186,10 +183,11 @@ public class PingManager {
      * 
      * @param jid The id of the entity the ping is being sent to
      * @return true if a reply was received from the entity, false otherwise.
+     * @throws NotConnectedException
+     * @throws NoResponseException
      */
-    public boolean ping(String jid) {
-        Connection connection = weakRefConnection.get();
-        return ping(jid, connection.getPacketReplyTimeout());
+    public boolean ping(String jid) throws NoResponseException, NotConnectedException {
+        return ping(jid, connection().getPacketReplyTimeout());
     }
 
     /**
@@ -197,12 +195,12 @@ public class PingManager {
      * 
      * @param jid The id of the entity the query is being sent to
      * @return true if it supports ping, false otherwise.
-     * @throws XMPPException An XMPP related error occurred during the request 
+     * @throws XMPPErrorException An XMPP related error occurred during the request 
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public boolean isPingSupported(String jid) throws XMPPException {
-        Connection connection = weakRefConnection.get();
-        DiscoverInfo result = ServiceDiscoveryManager.getInstanceFor(connection).discoverInfo(jid);
-        return result.containsFeature(PingManager.NAMESPACE);
+    public boolean isPingSupported(String jid) throws NoResponseException, XMPPErrorException, NotConnectedException  {
+        return ServiceDiscoveryManager.getInstanceFor(connection()).supportsFeature(jid, PingManager.NAMESPACE);
     }
 
     /**
@@ -213,15 +211,38 @@ public class PingManager {
      * {@link #isPingSupported(String)} is false.
      * 
      * @return true if a reply was received from the server, false otherwise.
+     * @throws NotConnectedException
      */
-    public boolean pingMyServer() {
-        Connection connection = weakRefConnection.get();
-        boolean res = ping(connection.getServiceName());
-        if (!res) {
+    public boolean pingMyServer() throws NotConnectedException {
+        return pingMyServer(true);
+    }
+
+    /**
+     * Pings the server. This method will return true if the server is reachable.  It
+     * is the equivalent of calling <code>ping</code> with the XMPP domain.
+     * <p>
+     * Unlike the {@link #ping(String)} case, this method will return true even if
+     * {@link #isPingSupported(String)} is false.
+     *
+     * @param notifyListeners Notify the PingFailedListener in case of error if true
+     * @return true if the user's server could be pinged.
+     * @throws NotConnectedException
+     */
+    public boolean pingMyServer(boolean notifyListeners) throws NotConnectedException {
+        boolean res;
+        try {
+            res = ping(connection().getServiceName());
+        }
+        catch (NoResponseException e) {
+            res = false;
+        }
+
+        if (res) {
+            pongReceived();
+        }
+        else if (notifyListeners) {
             for (PingFailedListener l : pingFailedListeners)
                 l.pingFailed();
-        } else {
-            pongReceived();
         }
         return res;
     }
@@ -268,7 +289,7 @@ public class PingManager {
      * users server. If there was no successful Ping (e.g. because this
      * feature is disabled) -1 will be returned.
      * 
-     * @return
+     * @return the timestamp of the last successful ping.
      */
     public long getLastSuccessfulPing() {
         return Math.max(lastSuccessfulAutomaticPing, lastSuccessfulManualPing);
@@ -282,8 +303,7 @@ public class PingManager {
         maybeStopPingServerTask();
         if (pingInterval > 0) {
             LOGGER.fine("Scheduling ServerPingTask in " + pingInterval + " seconds");
-            Connection connection = weakRefConnection.get();
-            nextAutomaticPing = connection.schedule(pingServerRunnable, pingInterval, TimeUnit.SECONDS);
+            nextAutomaticPing = connection().schedule(pingServerRunnable, pingInterval, TimeUnit.SECONDS);
         }
     }
 
@@ -304,7 +324,7 @@ public class PingManager {
 
         public void run() {
             LOGGER.fine("ServerPingTask run()");
-            Connection connection = weakRefConnection.get();
+            XMPPConnection connection = connection();
             if (connection == null) {
                 // connection has been collected by GC
                 // which means we can stop the thread by breaking the loop
@@ -323,7 +343,13 @@ public class PingManager {
                             return;
                         }
                     }
-                    res = pingMyServer();
+                    try {
+                        res = pingMyServer(false);
+                    }
+                    catch (SmackException e) {
+                        LOGGER.log(Level.WARNING, "SmackError while pinging server", e);
+                        res = false;
+                    }
                     // stop when we receive a pong back
                     if (res) {
                         lastSuccessfulAutomaticPing = System.currentTimeMillis();
@@ -340,7 +366,7 @@ public class PingManager {
                     maybeSchedulePingServerTask();
                 }
             } else {
-                LOGGER.warning("ServerPingTask: Connection was not authenticated");
+                LOGGER.warning("ServerPingTask: XMPPConnection was not authenticated");
             }
         }
     };

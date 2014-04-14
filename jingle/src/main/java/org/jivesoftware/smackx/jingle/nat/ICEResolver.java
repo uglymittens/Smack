@@ -26,7 +26,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.jingle.JingleSession;
 
@@ -45,7 +46,7 @@ public class ICEResolver extends TransportResolver {
 
 	private static final Logger LOGGER = Logger.getLogger(ICEResolver.class.getName());
 
-    Connection connection;
+    XMPPConnection connection;
     Random random = new Random();
     long sid;
     String server;
@@ -53,7 +54,7 @@ public class ICEResolver extends TransportResolver {
     static Map<String, ICENegociator> negociatorsMap = new HashMap<String, ICENegociator>();
     //ICENegociator iceNegociator = null;
 
-    public ICEResolver(Connection connection, String server, int port) {
+    public ICEResolver(XMPPConnection connection, String server, int port) {
         super();
         this.connection = connection;
         this.server = server;
@@ -89,8 +90,9 @@ public class ICEResolver extends TransportResolver {
 
     /**
      * Resolve the IP and obtain a valid transport method.
+     * @throws SmackException 
      */
-    public synchronized void resolve(JingleSession session) throws XMPPException {
+    public synchronized void resolve(JingleSession session) throws XMPPException, SmackException {
         this.setResolveInit();
 
         for (TransportCandidate candidate : this.getCandidatesList()) {

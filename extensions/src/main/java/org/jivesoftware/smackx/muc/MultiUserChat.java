@@ -23,25 +23,29 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import org.jivesoftware.smack.AbstractConnectionListener;
 import org.jivesoftware.smack.Chat;
+import org.jivesoftware.smack.ChatManager;
 import org.jivesoftware.smack.ConnectionCreationListener;
-import org.jivesoftware.smack.ConnectionListener;
 import org.jivesoftware.smack.MessageListener;
 import org.jivesoftware.smack.PacketCollector;
 import org.jivesoftware.smack.PacketInterceptor;
 import org.jivesoftware.smack.PacketListener;
-import org.jivesoftware.smack.SmackConfiguration;
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.AndFilter;
 import org.jivesoftware.smack.filter.FromMatchesFilter;
 import org.jivesoftware.smack.filter.MessageTypeFilter;
@@ -80,10 +84,10 @@ public class MultiUserChat {
     private final static String discoNamespace = "http://jabber.org/protocol/muc";
     private final static String discoNode = "http://jabber.org/protocol/muc#rooms";
 
-    private static Map<Connection, List<String>> joinedRooms =
-            new WeakHashMap<Connection, List<String>>();
+    private static Map<XMPPConnection, List<String>> joinedRooms =
+            new WeakHashMap<XMPPConnection, List<String>>();
 
-    private Connection connection;
+    private XMPPConnection connection;
     private String room;
     private String subject;
     private String nickname = null;
@@ -107,8 +111,8 @@ public class MultiUserChat {
     private List<PacketListener> connectionListeners = new ArrayList<PacketListener>();
 
     static {
-        Connection.addConnectionCreationListener(new ConnectionCreationListener() {
-            public void connectionCreated(final Connection connection) {
+        XMPPConnection.addConnectionCreationListener(new ConnectionCreationListener() {
+            public void connectionCreated(final XMPPConnection connection) {
                 // Set on every established connection that this client supports the Multi-User
                 // Chat protocol. This information will be used when another client tries to
                 // discover whether this client supports MUC or not.
@@ -116,17 +120,16 @@ public class MultiUserChat {
 
                 // Set the NodeInformationProvider that will provide information about the
                 // joined rooms whenever a disco request is received
-                final WeakReference<Connection> weakRefConnection = new WeakReference<Connection>(connection);
+                final WeakReference<XMPPConnection> weakRefConnection = new WeakReference<XMPPConnection>(connection);
                 ServiceDiscoveryManager.getInstanceFor(connection).setNodeInformationProvider(
                     discoNode,
                     new NodeInformationProvider() {
                         public List<DiscoverItems.Item> getNodeItems() {
-                            Connection connection = weakRefConnection.get();
+                            XMPPConnection connection = weakRefConnection.get();
                             if (connection == null) return new LinkedList<DiscoverItems.Item>();
                             List<DiscoverItems.Item> answer = new ArrayList<DiscoverItems.Item>();
-                            Iterator<String> rooms=MultiUserChat.getJoinedRooms(connection);
-                            while (rooms.hasNext()) {
-                                answer.add(new DiscoverItems.Item(rooms.next()));
+                            for (String room : MultiUserChat.getJoinedRooms(connection)) {
+                                answer.add(new DiscoverItems.Item(room));
                             }
                             return answer;
                         }
@@ -163,9 +166,9 @@ public class MultiUserChat {
      *      "service" is the hostname at which the multi-user chat
      *      service is running. Make sure to provide a valid JID.
      */
-    public MultiUserChat(Connection connection, String room) {
+    public MultiUserChat(XMPPConnection connection, String room) {
         this.connection = connection;
-        this.room = room.toLowerCase();
+        this.room = room.toLowerCase(Locale.US);
         init();
     }
 
@@ -175,61 +178,55 @@ public class MultiUserChat {
      * @param connection the connection to use to perform the service discovery.
      * @param user the user to check. A fully qualified xmpp ID, e.g. jdoe@example.com.
      * @return a boolean indicating whether the specified user supports the MUC protocol.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static boolean isServiceEnabled(Connection connection, String user) {
-        try {
-            DiscoverInfo result =
-                ServiceDiscoveryManager.getInstanceFor(connection).discoverInfo(user);
-            return result.containsFeature(discoNamespace);
-        }
-        catch (XMPPException e) {
-            LOGGER.log(Level.SEVERE, "Error checking user [" + user + "] for MUC support", e);
-            return false;
-        }
+    public static boolean isServiceEnabled(XMPPConnection connection, String user)
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
+        return ServiceDiscoveryManager.getInstanceFor(connection).supportsFeature(user,
+                        discoNamespace);
     }
 
     /**
-     * Returns an Iterator on the rooms where the user has joined using a given connection.
+     * Returns a List of the rooms where the user has joined using a given connection.
      * The Iterator will contain Strings where each String represents a room
      * (e.g. room@muc.jabber.org).
      *
      * @param connection the connection used to join the rooms.
-     * @return an Iterator on the rooms where the user has joined using a given connection.
+     * @return a List of the rooms where the user has joined using a given connection.
      */
-    private static Iterator<String> getJoinedRooms(Connection connection) {
+    private static List<String> getJoinedRooms(XMPPConnection connection) {
         List<String> rooms = joinedRooms.get(connection);
         if (rooms != null) {
-            return rooms.iterator();
+            return rooms;
         }
-        // Return an iterator on an empty collection (i.e. the user never joined a room)
-        return new ArrayList<String>().iterator();
+        // Return an empty collection (i.e. the user never joined a room)
+        return Collections.emptyList();
     }
 
     /**
-     * Returns an Iterator on the rooms where the requested user has joined. The Iterator will
+     * Returns a List of the rooms where the requested user has joined. The Iterator will
      * contain Strings where each String represents a room (e.g. room@muc.jabber.org).
      *
      * @param connection the connection to use to perform the service discovery.
      * @param user the user to check. A fully qualified xmpp ID, e.g. jdoe@example.com.
-     * @return an Iterator on the rooms where the requested user has joined.
+     * @return a List of the rooms where the requested user has joined.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static Iterator<String> getJoinedRooms(Connection connection, String user) {
-        try {
-            ArrayList<String> answer = new ArrayList<String>();
-            // Send the disco packet to the user
-            DiscoverItems result =
-                ServiceDiscoveryManager.getInstanceFor(connection).discoverItems(user, discoNode);
-            // Collect the entityID for each returned item
-            for (Iterator<DiscoverItems.Item> items=result.getItems(); items.hasNext();) {
-                answer.add(items.next().getEntityID());
-            }
-            return answer.iterator();
+    public static List<String> getJoinedRooms(XMPPConnection connection, String user)
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
+        ArrayList<String> answer = new ArrayList<String>();
+        // Send the disco packet to the user
+        DiscoverItems result = ServiceDiscoveryManager.getInstanceFor(connection).discoverItems(
+                        user, discoNode);
+        // Collect the entityID for each returned item
+        for (DiscoverItems.Item item : result.getItems()) {
+            answer.add(item.getEntityID());
         }
-        catch (XMPPException e) {
-            LOGGER.log(Level.SEVERE, "Error getting joined rooms for user [" + user + "]", e);
-            // Return an iterator on an empty collection
-            return new ArrayList<String>().iterator();
-        }
+        return answer;
     }
 
     /**
@@ -240,10 +237,12 @@ public class MultiUserChat {
      * @param room the name of the room in the form "roomName@service" of which we want to discover
      *        its information.
      * @return the discovered information of a given room without actually having to join the room.
-     * @throws XMPPException if an error occured while trying to discover information of a room.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static RoomInfo getRoomInfo(Connection connection, String room)
-            throws XMPPException {
+    public static RoomInfo getRoomInfo(XMPPConnection connection, String room)
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
         DiscoverInfo info = ServiceDiscoveryManager.getInstanceFor(connection).discoverInfo(room);
         return new RoomInfo(info);
     }
@@ -253,23 +252,18 @@ public class MultiUserChat {
      *
      * @param connection the XMPP connection to use for discovering Multi-User Chat services.
      * @return a collection with the XMPP addresses of the Multi-User Chat services.
-     * @throws XMPPException if an error occured while trying to discover MUC services.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static Collection<String> getServiceNames(Connection connection) throws XMPPException {
+    public static Collection<String> getServiceNames(XMPPConnection connection) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         final List<String> answer = new ArrayList<String>();
         ServiceDiscoveryManager discoManager = ServiceDiscoveryManager.getInstanceFor(connection);
         DiscoverItems items = discoManager.discoverItems(connection.getServiceName());
-        for (Iterator<DiscoverItems.Item> it = items.getItems(); it.hasNext();) {
-            DiscoverItems.Item item = it.next();
-            try {
-                DiscoverInfo info = discoManager.discoverInfo(item.getEntityID());
-                if (info.containsFeature("http://jabber.org/protocol/muc")) {
-                    answer.add(item.getEntityID());
-                }
-            }
-            catch (XMPPException e) {
-                // Trouble finding info in some cases. This is a workaround for
-                // discovering info on remote servers.
+        for (DiscoverItems.Item item : items.getItems()) {
+            DiscoverInfo info = discoManager.discoverInfo(item.getEntityID());
+            if (info.containsFeature(discoNamespace)) {
+                answer.add(item.getEntityID());
             }
         }
         return answer;
@@ -283,15 +277,17 @@ public class MultiUserChat {
      * @param connection the XMPP connection to use for discovering hosted rooms by the MUC service.
      * @param serviceName the service that is hosting the rooms to discover.
      * @return a collection of HostedRooms.
-     * @throws XMPPException if an error occured while trying to discover the information.
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    public static Collection<HostedRoom> getHostedRooms(Connection connection, String serviceName)
-            throws XMPPException {
+    public static Collection<HostedRoom> getHostedRooms(XMPPConnection connection,
+                    String serviceName) throws NoResponseException, XMPPErrorException, NotConnectedException {
         List<HostedRoom> answer = new ArrayList<HostedRoom>();
         ServiceDiscoveryManager discoManager = ServiceDiscoveryManager.getInstanceFor(connection);
         DiscoverItems items = discoManager.discoverItems(serviceName);
-        for (Iterator<DiscoverItems.Item> it = items.getItems(); it.hasNext();) {
-            answer.add(new HostedRoom(it.next()));
+        for (DiscoverItems.Item item : items.getItems()) {
+            answer.add(new HostedRoom(item));
         }
         return answer;
     }
@@ -321,11 +317,13 @@ public class MultiUserChat {
      * will unlock the room. {@link #sendConfigurationForm(Form)}
      *
      * @param nickname the nickname to use.
-     * @throws XMPPException if the room couldn't be created for some reason
+     * @throws XMPPErrorException if the room couldn't be created for some reason
      *          (e.g. room already exists; user already joined to an existant room or
      *          405 error if the user is not allowed to create the room)
+     * @throws NoResponseException if there was no response from the server.
+     * @throws SmackException If the creation failed because of a missing acknowledge from the server.
      */
-    public synchronized void create(String nickname) throws XMPPException {
+    public synchronized void create(String nickname) throws NoResponseException, XMPPErrorException, SmackException {
         if (nickname == null || nickname.equals("")) {
             throw new IllegalArgumentException("Nickname must not be null or blank.");
         }
@@ -348,7 +346,7 @@ public class MultiUserChat {
         // Wait for a presence packet back from the server.
         PacketFilter responseFilter =
             new AndFilter(
-                new FromMatchesFilter(room + "/" + nickname),
+                FromMatchesFilter.createFull(room + "/" + nickname),
                 new PacketTypeFilter(Presence.class));
         PacketCollector response = connection.createPacketCollector(responseFilter);
         // Send create & join packet.
@@ -371,32 +369,35 @@ public class MultiUserChat {
         }
         // We need to leave the room since it seems that the room already existed
         leave();
-        throw new XMPPException("Creation failed - Missing acknowledge of room creation.");
+        throw new SmackException("Creation failed - Missing acknowledge of room creation.");
     }
 
     /**
      * Joins the chat room using the specified nickname. If already joined
      * using another nickname, this method will first leave the room and then
-     * re-join using the new nickname. The default timeout of Smack for a reply
+     * re-join using the new nickname. The default connection timeout for a reply
      * from the group chat server that the join succeeded will be used. After
      * joining the room, the room will decide the amount of history to send.
      *
      * @param nickname the nickname to use.
-     * @throws XMPPException if an error occurs joining the room. In particular, a
+     * @throws NoResponseException 
+     * @throws XMPPErrorException if an error occurs joining the room. In particular, a
      *      401 error can occur if no password was provided and one is required; or a
      *      403 error can occur if the user is banned; or a
      *      404 error can occur if the room does not exist or is locked; or a
      *      407 error can occur if user is not on the member list; or a
      *      409 error can occur if someone is already in the group chat with the same nickname.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void join(String nickname) throws XMPPException {
-        join(nickname, null, null, SmackConfiguration.getDefaultPacketReplyTimeout());
+    public void join(String nickname) throws NoResponseException, XMPPErrorException, NotConnectedException {
+        join(nickname, null, null, connection.getPacketReplyTimeout());
     }
 
     /**
      * Joins the chat room using the specified nickname and password. If already joined
      * using another nickname, this method will first leave the room and then
-     * re-join using the new nickname. The default timeout of Smack for a reply
+     * re-join using the new nickname. The default connection timeout for a reply
      * from the group chat server that the join succeeded will be used. After
      * joining the room, the room will decide the amount of history to send.<p>
      *
@@ -405,15 +406,16 @@ public class MultiUserChat {
      *
      * @param nickname the nickname to use.
      * @param password the password to use.
-     * @throws XMPPException if an error occurs joining the room. In particular, a
+     * @throws XMPPErrorException if an error occurs joining the room. In particular, a
      *      401 error can occur if no password was provided and one is required; or a
      *      403 error can occur if the user is banned; or a
      *      404 error can occur if the room does not exist or is locked; or a
      *      407 error can occur if user is not on the member list; or a
      *      409 error can occur if someone is already in the group chat with the same nickname.
+     * @throws SmackException if there was no response from the server.
      */
-    public void join(String nickname, String password) throws XMPPException {
-        join(nickname, password, null, SmackConfiguration.getDefaultPacketReplyTimeout());
+    public void join(String nickname, String password) throws XMPPErrorException, SmackException {
+        join(nickname, password, null, connection.getPacketReplyTimeout());
     }
 
     /**
@@ -434,19 +436,21 @@ public class MultiUserChat {
      * @param password the password to use.
      * @param history the amount of discussion history to receive while joining a room.
      * @param timeout the amount of time to wait for a reply from the MUC service(in milleseconds).
-     * @throws XMPPException if an error occurs joining the room. In particular, a
+     * @throws XMPPErrorException if an error occurs joining the room. In particular, a
      *      401 error can occur if no password was provided and one is required; or a
      *      403 error can occur if the user is banned; or a
      *      404 error can occur if the room does not exist or is locked; or a
      *      407 error can occur if user is not on the member list; or a
      *      409 error can occur if someone is already in the group chat with the same nickname.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
     public synchronized void join(
         String nickname,
         String password,
         DiscussionHistory history,
         long timeout)
-        throws XMPPException {
+        throws XMPPErrorException, NoResponseException, NotConnectedException {
         if (nickname == null || nickname.equals("")) {
             throw new IllegalArgumentException("Nickname must not be null or blank.");
         }
@@ -477,7 +481,7 @@ public class MultiUserChat {
         // Wait for a presence packet back from the server.
         PacketFilter responseFilter =
                 new AndFilter(
-                        new FromMatchesFilter(room + "/" + nickname),
+                        FromMatchesFilter.createFull(room + "/" + nickname),
                         new PacketTypeFilter(Presence.class));
         PacketCollector response = null;
 
@@ -504,8 +508,9 @@ public class MultiUserChat {
 
     /**
      * Leave the chat room.
+     * @throws NotConnectedException 
      */
-    public synchronized void leave() {
+    public synchronized void leave() throws NotConnectedException {
         // If not joined already, do nothing.
         if (!joined) {
             return;
@@ -533,9 +538,11 @@ public class MultiUserChat {
      *
      * @return the Form that contains the fields to complete together with the instrucions or
      * <tt>null</tt> if no configuration is possible.
-     * @throws XMPPException if an error occurs asking the configuration form for the room.
+     * @throws XMPPErrorException if an error occurs asking the configuration form for the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Form getConfigurationForm() throws XMPPException {
+    public Form getConfigurationForm() throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCOwner iq = new MUCOwner();
         iq.setTo(room);
         iq.setType(IQ.Type.GET);
@@ -550,9 +557,11 @@ public class MultiUserChat {
      * will create an instant room (will use default configuration).
      *
      * @param form the form with the new settings.
-     * @throws XMPPException if an error occurs setting the new rooms' configuration.
+     * @throws XMPPErrorException if an error occurs setting the new rooms' configuration.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void sendConfigurationForm(Form form) throws XMPPException {
+    public void sendConfigurationForm(Form form) throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCOwner iq = new MUCOwner();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -572,10 +581,12 @@ public class MultiUserChat {
      *
      * @return the registration Form that contains the fields to complete together with the
      * instrucions or <tt>null</tt> if no registration is possible.
-     * @throws XMPPException if an error occurs asking the registration form for the room or a
+     * @throws XMPPErrorException if an error occurs asking the registration form for the room or a
      * 405 error if the user is not allowed to register with the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Form getRegistrationForm() throws XMPPException {
+    public Form getRegistrationForm() throws NoResponseException, XMPPErrorException, NotConnectedException {
         Registration reg = new Registration();
         reg.setType(IQ.Type.GET);
         reg.setTo(room);
@@ -594,11 +605,13 @@ public class MultiUserChat {
      * it will return a "Service Unavailable" error to the user (error code 503).
      *
      * @param form the completed registration form.
-     * @throws XMPPException if an error occurs submitting the registration form. In particular, a
+     * @throws XMPPErrorException if an error occurs submitting the registration form. In particular, a
      *      409 error can occur if the desired room nickname is already reserved for that room;
      *      or a 503 error can occur if the room does not support registration.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void sendRegistrationForm(Form form) throws XMPPException {
+    public void sendRegistrationForm(Form form) throws NoResponseException, XMPPErrorException, NotConnectedException {
         Registration reg = new Registration();
         reg.setType(IQ.Type.SET);
         reg.setTo(room);
@@ -614,12 +627,14 @@ public class MultiUserChat {
      *
      * @param reason the reason for the room destruction.
      * @param alternateJID the JID of an alternate location.
-     * @throws XMPPException if an error occurs while trying to destroy the room.
+     * @throws XMPPErrorException if an error occurs while trying to destroy the room.
      *      An error can occur which will be wrapped by an XMPPException --
      *      XMPP error code 403. The error code can be used to present more
      *      appropiate error messages to end-users.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void destroy(String reason, String alternateJID) throws XMPPException {
+    public void destroy(String reason, String alternateJID) throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCOwner iq = new MUCOwner();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -648,8 +663,9 @@ public class MultiUserChat {
      *
      * @param user the user to invite to the room.(e.g. hecate@shakespeare.lit)
      * @param reason the reason why the user is being invited.
+     * @throws NotConnectedException 
      */
-    public void invite(String user, String reason) {
+    public void invite(String user, String reason) throws NotConnectedException {
         invite(new Message(), user, reason);
     }
 
@@ -663,8 +679,9 @@ public class MultiUserChat {
      * @param message the message to use for sending the invitation.
      * @param user the user to invite to the room.(e.g. hecate@shakespeare.lit)
      * @param reason the reason why the user is being invited.
+     * @throws NotConnectedException 
      */
-    public void invite(Message message, String user, String reason) {
+    public void invite(Message message, String user, String reason) throws NotConnectedException {
         // TODO listen for 404 error code when inviter supplies a non-existent JID
         message.setTo(room);
 
@@ -688,8 +705,9 @@ public class MultiUserChat {
      * @param room the room that sent the original invitation.
      * @param inviter the inviter of the declined invitation.
      * @param reason the reason why the invitee is declining the invitation.
+     * @throws NotConnectedException 
      */
-    public static void decline(Connection conn, String room, String inviter, String reason) {
+    public static void decline(XMPPConnection conn, String room, String inviter, String reason) throws NotConnectedException {
         Message message = new Message(room);
 
         // Create the MUCUser packet that will include the rejection
@@ -711,7 +729,7 @@ public class MultiUserChat {
      * @param conn the connection where the listener will be applied.
      * @param listener an invitation listener.
      */
-    public static void addInvitationListener(Connection conn, InvitationListener listener) {
+    public static void addInvitationListener(XMPPConnection conn, InvitationListener listener) {
         InvitationsMonitor.getInvitationsMonitor(conn).addInvitationListener(listener);
     }
 
@@ -722,7 +740,7 @@ public class MultiUserChat {
      * @param conn the connection where the listener was applied.
      * @param listener an invitation listener.
      */
-    public static void removeInvitationListener(Connection conn, InvitationListener listener) {
+    public static void removeInvitationListener(XMPPConnection conn, InvitationListener listener) {
         InvitationsMonitor.getInvitationsMonitor(conn).removeInvitationListener(listener);
     }
 
@@ -855,17 +873,16 @@ public class MultiUserChat {
      * to enter the room.
      *
      * @return the reserved room nickname or <tt>null</tt> if none.
+     * @throws SmackException if there was no response from the server.
      */
-    public String getReservedNickname() {
+    public String getReservedNickname() throws SmackException {
         try {
             DiscoverInfo result =
                 ServiceDiscoveryManager.getInstanceFor(connection).discoverInfo(
                     room,
                     "x-roomuser-item");
             // Look for an Identity that holds the reserved nickname and return its name
-            for (Iterator<DiscoverInfo.Identity> identities = result.getIdentities();
-                 identities.hasNext();) {
-                DiscoverInfo.Identity identity = identities.next();
+            for (DiscoverInfo.Identity identity : result.getIdentities()) {
                 return identity.getName();
             }
         }
@@ -894,9 +911,11 @@ public class MultiUserChat {
      * status code 303 indicates that the occupant is changing his/her nickname.
      *
      * @param nickname the new nickname within the room.
-     * @throws XMPPException if the new nickname is already in use by another occupant.
+     * @throws XMPPErrorException if the new nickname is already in use by another occupant.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void changeNickname(String nickname) throws XMPPException {
+    public void changeNickname(String nickname) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         if (nickname == null || nickname.equals("")) {
             throw new IllegalArgumentException("Nickname must not be null or blank.");
         }
@@ -918,7 +937,7 @@ public class MultiUserChat {
         // Wait for a presence packet back from the server.
         PacketFilter responseFilter =
             new AndFilter(
-                new FromMatchesFilter(room + "/" + nickname),
+                FromMatchesFilter.createFull(room + "/" + nickname),
                 new PacketTypeFilter(Presence.class));
         PacketCollector response = connection.createPacketCollector(responseFilter);
         // Send join packet.
@@ -937,8 +956,9 @@ public class MultiUserChat {
      *
      * @param status a text message describing the presence update.
      * @param mode the mode type for the presence update.
+     * @throws NotConnectedException 
      */
-    public void changeAvailabilityStatus(String status, Presence.Mode mode) {
+    public void changeAvailabilityStatus(String status, Presence.Mode mode) throws NotConnectedException {
         if (nickname == null || nickname.equals("")) {
             throw new IllegalArgumentException("Nickname must not be null or blank.");
         }
@@ -974,14 +994,16 @@ public class MultiUserChat {
      * @param nickname the nickname of the participant or visitor to kick from the room
      * (e.g. "john").
      * @param reason the reason why the participant or visitor is being kicked from the room.
-     * @throws XMPPException if an error occurs kicking the occupant. In particular, a
+     * @throws XMPPErrorException if an error occurs kicking the occupant. In particular, a
      *      405 error can occur if a moderator or a user with an affiliation of "owner" or "admin"
      *      was intended to be kicked (i.e. Not Allowed error); or a
      *      403 error can occur if the occupant that intended to kick another occupant does
      *      not have kicking privileges (i.e. Forbidden error); or a
      *      400 error can occur if the provided nickname is not present in the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void kickParticipant(String nickname, String reason) throws XMPPException {
+    public void kickParticipant(String nickname, String reason) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nickname, "none", reason);
     }
 
@@ -991,12 +1013,14 @@ public class MultiUserChat {
      * is able to send messages to the room occupants.
      *
      * @param nicknames the nicknames of the visitors to grant voice in the room (e.g. "john").
-     * @throws XMPPException if an error occurs granting voice to a visitor. In particular, a
+     * @throws XMPPErrorException if an error occurs granting voice to a visitor. In particular, a
      *      403 error can occur if the occupant that intended to grant voice is not
      *      a moderator in this room (i.e. Forbidden error); or a
      *      400 error can occur if the provided nickname is not present in the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantVoice(Collection<String> nicknames) throws XMPPException {
+    public void grantVoice(Collection<String> nicknames) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nicknames, "participant");
     }
 
@@ -1006,12 +1030,14 @@ public class MultiUserChat {
      * is able to send messages to the room occupants.
      *
      * @param nickname the nickname of the visitor to grant voice in the room (e.g. "john").
-     * @throws XMPPException if an error occurs granting voice to a visitor. In particular, a
+     * @throws XMPPErrorException if an error occurs granting voice to a visitor. In particular, a
      *      403 error can occur if the occupant that intended to grant voice is not
      *      a moderator in this room (i.e. Forbidden error); or a
      *      400 error can occur if the provided nickname is not present in the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantVoice(String nickname) throws XMPPException {
+    public void grantVoice(String nickname) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nickname, "participant", null);
     }
 
@@ -1021,12 +1047,14 @@ public class MultiUserChat {
      * is able to send messages to the room occupants.
      *
      * @param nicknames the nicknames of the participants to revoke voice (e.g. "john").
-     * @throws XMPPException if an error occurs revoking voice from a participant. In particular, a
+     * @throws XMPPErrorException if an error occurs revoking voice from a participant. In particular, a
      *      405 error can occur if a moderator or a user with an affiliation of "owner" or "admin"
      *      was tried to revoke his voice (i.e. Not Allowed error); or a
      *      400 error can occur if the provided nickname is not present in the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeVoice(Collection<String> nicknames) throws XMPPException {
+    public void revokeVoice(Collection<String> nicknames) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nicknames, "visitor");
     }
 
@@ -1036,12 +1064,14 @@ public class MultiUserChat {
      * is able to send messages to the room occupants.
      *
      * @param nickname the nickname of the participant to revoke voice (e.g. "john").
-     * @throws XMPPException if an error occurs revoking voice from a participant. In particular, a
+     * @throws XMPPErrorException if an error occurs revoking voice from a participant. In particular, a
      *      405 error can occur if a moderator or a user with an affiliation of "owner" or "admin"
      *      was tried to revoke his voice (i.e. Not Allowed error); or a
      *      400 error can occur if the provided nickname is not present in the room.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeVoice(String nickname) throws XMPPException {
+    public void revokeVoice(String nickname) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nickname, "visitor", null);
     }
 
@@ -1053,11 +1083,13 @@ public class MultiUserChat {
      * XMPP user ID of the user who initiated the ban.
      *
      * @param jids the bare XMPP user IDs of the users to ban.
-     * @throws XMPPException if an error occurs banning a user. In particular, a
+     * @throws XMPPErrorException if an error occurs banning a user. In particular, a
      *      405 error can occur if a moderator or a user with an affiliation of "owner" or "admin"
      *      was tried to be banned (i.e. Not Allowed error).
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void banUsers(Collection<String> jids) throws XMPPException {
+    public void banUsers(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jids, "outcast");
     }
 
@@ -1070,11 +1102,13 @@ public class MultiUserChat {
      *
      * @param jid the bare XMPP user ID of the user to ban (e.g. "user@host.org").
      * @param reason the optional reason why the user was banned.
-     * @throws XMPPException if an error occurs banning a user. In particular, a
+     * @throws XMPPErrorException if an error occurs banning a user. In particular, a
      *      405 error can occur if a moderator or a user with an affiliation of "owner" or "admin"
      *      was tried to be banned (i.e. Not Allowed error).
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void banUser(String jid, String reason) throws XMPPException {
+    public void banUser(String jid, String reason) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jid, "outcast", reason);
     }
 
@@ -1084,9 +1118,11 @@ public class MultiUserChat {
      * that a user cannot enter without being on the member list).
      *
      * @param jids the XMPP user IDs of the users to grant membership.
-     * @throws XMPPException if an error occurs granting membership to a user.
+     * @throws XMPPErrorException if an error occurs granting membership to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantMembership(Collection<String> jids) throws XMPPException {
+    public void grantMembership(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jids, "member");
     }
 
@@ -1096,9 +1132,11 @@ public class MultiUserChat {
      * that a user cannot enter without being on the member list).
      *
      * @param jid the XMPP user ID of the user to grant membership (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs granting membership to a user.
+     * @throws XMPPErrorException if an error occurs granting membership to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantMembership(String jid) throws XMPPException {
+    public void grantMembership(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jid, "member", null);
     }
 
@@ -1109,9 +1147,11 @@ public class MultiUserChat {
      * the room is of type members-only then the user will be removed from the room.
      *
      * @param jids the bare XMPP user IDs of the users to revoke membership.
-     * @throws XMPPException if an error occurs revoking membership to a user.
+     * @throws XMPPErrorException if an error occurs revoking membership to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeMembership(Collection<String> jids) throws XMPPException {
+    public void revokeMembership(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jids, "none");
     }
 
@@ -1122,9 +1162,11 @@ public class MultiUserChat {
      * the room is of type members-only then the user will be removed from the room.
      *
      * @param jid the bare XMPP user ID of the user to revoke membership (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs revoking membership to a user.
+     * @throws XMPPErrorException if an error occurs revoking membership to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeMembership(String jid) throws XMPPException {
+    public void revokeMembership(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jid, "none", null);
     }
 
@@ -1134,9 +1176,11 @@ public class MultiUserChat {
      * other users, modify room's subject plus all the partcipants privileges.
      *
      * @param nicknames the nicknames of the occupants to grant moderator privileges.
-     * @throws XMPPException if an error occurs granting moderator privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting moderator privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantModerator(Collection<String> nicknames) throws XMPPException {
+    public void grantModerator(Collection<String> nicknames) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nicknames, "moderator");
     }
 
@@ -1146,9 +1190,11 @@ public class MultiUserChat {
      * other users, modify room's subject plus all the partcipants privileges.
      *
      * @param nickname the nickname of the occupant to grant moderator privileges.
-     * @throws XMPPException if an error occurs granting moderator privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting moderator privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantModerator(String nickname) throws XMPPException {
+    public void grantModerator(String nickname) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nickname, "moderator", null);
     }
 
@@ -1159,9 +1205,11 @@ public class MultiUserChat {
      * not allowed to revoke moderator privileges from other room administrators or owners.
      *
      * @param nicknames the nicknames of the occupants to revoke moderator privileges.
-     * @throws XMPPException if an error occurs revoking moderator privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking moderator privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeModerator(Collection<String> nicknames) throws XMPPException {
+    public void revokeModerator(Collection<String> nicknames) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nicknames, "participant");
     }
 
@@ -1172,9 +1220,11 @@ public class MultiUserChat {
      * not allowed to revoke moderator privileges from other room administrators or owners.
      *
      * @param nickname the nickname of the occupant to revoke moderator privileges.
-     * @throws XMPPException if an error occurs revoking moderator privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking moderator privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeModerator(String nickname) throws XMPPException {
+    public void revokeModerator(String nickname) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeRole(nickname, "participant", null);
     }
 
@@ -1185,9 +1235,11 @@ public class MultiUserChat {
      * functions.
      *
      * @param jids the collection of bare XMPP user IDs of the users to grant ownership.
-     * @throws XMPPException if an error occurs granting ownership privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting ownership privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantOwnership(Collection<String> jids) throws XMPPException {
+    public void grantOwnership(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jids, "owner");
     }
 
@@ -1198,9 +1250,11 @@ public class MultiUserChat {
      * functions.
      *
      * @param jid the bare XMPP user ID of the user to grant ownership (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs granting ownership privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting ownership privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantOwnership(String jid) throws XMPPException {
+    public void grantOwnership(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jid, "owner", null);
     }
 
@@ -1210,9 +1264,11 @@ public class MultiUserChat {
      * Some room implementations will not allow to grant ownership privileges to other users.
      *
      * @param jids the bare XMPP user IDs of the users to revoke ownership.
-     * @throws XMPPException if an error occurs revoking ownership privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking ownership privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeOwnership(Collection<String> jids) throws XMPPException {
+    public void revokeOwnership(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jids, "admin");
     }
 
@@ -1222,9 +1278,11 @@ public class MultiUserChat {
      * Some room implementations will not allow to grant ownership privileges to other users.
      *
      * @param jid the bare XMPP user ID of the user to revoke ownership (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs revoking ownership privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking ownership privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeOwnership(String jid) throws XMPPException {
+    public void revokeOwnership(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByAdmin(jid, "admin", null);
     }
 
@@ -1234,9 +1292,11 @@ public class MultiUserChat {
      * administrative functions such as banning users and edit moderator list.
      *
      * @param jids the bare XMPP user IDs of the users to grant administrator privileges.
-     * @throws XMPPException if an error occurs granting administrator privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting administrator privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantAdmin(Collection<String> jids) throws XMPPException {
+    public void grantAdmin(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByOwner(jids, "admin");
     }
 
@@ -1247,9 +1307,11 @@ public class MultiUserChat {
      *
      * @param jid the bare XMPP user ID of the user to grant administrator privileges
      * (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs granting administrator privileges to a user.
+     * @throws XMPPErrorException if an error occurs granting administrator privileges to a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void grantAdmin(String jid) throws XMPPException {
+    public void grantAdmin(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByOwner(jid, "admin");
     }
 
@@ -1259,9 +1321,11 @@ public class MultiUserChat {
      * a member or unaffiliated user.
      *
      * @param jids the bare XMPP user IDs of the user to revoke administrator privileges.
-     * @throws XMPPException if an error occurs revoking administrator privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking administrator privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeAdmin(Collection<String> jids) throws XMPPException {
+    public void revokeAdmin(Collection<String> jids) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByOwner(jids, "member");
     }
 
@@ -1272,13 +1336,16 @@ public class MultiUserChat {
      *
      * @param jid the bare XMPP user ID of the user to revoke administrator privileges
      * (e.g. "user@host.org").
-     * @throws XMPPException if an error occurs revoking administrator privileges from a user.
+     * @throws XMPPErrorException if an error occurs revoking administrator privileges from a user.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void revokeAdmin(String jid) throws XMPPException {
+    public void revokeAdmin(String jid) throws XMPPErrorException, NoResponseException, NotConnectedException {
         changeAffiliationByOwner(jid, "member");
     }
 
-    private void changeAffiliationByOwner(String jid, String affiliation) throws XMPPException {
+    private void changeAffiliationByOwner(String jid, String affiliation)
+                    throws XMPPErrorException, NoResponseException, NotConnectedException {
         MUCOwner iq = new MUCOwner();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1291,7 +1358,7 @@ public class MultiUserChat {
     }
 
     private void changeAffiliationByOwner(Collection<String> jids, String affiliation)
-            throws XMPPException {
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCOwner iq = new MUCOwner();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1311,10 +1378,12 @@ public class MultiUserChat {
      * @param jid
      * @param affiliation
      * @param reason the reason for the affiliation change (optional)
-     * @throws XMPPException
+     * @throws XMPPErrorException 
+     * @throws NoResponseException 
+     * @throws NotConnectedException 
      */
-    private void changeAffiliationByAdmin(String jid, String affiliation, String reason)
-            throws XMPPException {
+    private void changeAffiliationByAdmin(String jid, String affiliation, String reason) throws NoResponseException, XMPPErrorException, NotConnectedException
+            {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1328,7 +1397,7 @@ public class MultiUserChat {
     }
 
     private void changeAffiliationByAdmin(Collection<String> jids, String affiliation)
-            throws XMPPException {
+                    throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1342,7 +1411,7 @@ public class MultiUserChat {
         connection.createPacketCollectorAndSend(iq).nextResultOrThrow();
     }
 
-    private void changeRole(String nickname, String role, String reason) throws XMPPException {
+    private void changeRole(String nickname, String role, String reason) throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1355,7 +1424,7 @@ public class MultiUserChat {
         connection.createPacketCollectorAndSend(iq).nextResultOrThrow();
     }
 
-    private void changeRole(Collection<String> nicknames, String role) throws XMPPException {
+    private void changeRole(Collection<String> nicknames, String role) throws NoResponseException, XMPPErrorException, NotConnectedException  {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.SET);
@@ -1392,11 +1461,10 @@ public class MultiUserChat {
      * Note: this value will only be accurate after joining the group chat, and may
      * fluctuate over time.
      *
-     * @return an Iterator for the occupants in the group chat.
+     * @return a List of the occupants in the group chat.
      */
-    public Iterator<String> getOccupants() {
-        return Collections.unmodifiableList(new ArrayList<String>(occupantsMap.keySet()))
-                .iterator();
+    public List<String> getOccupants() {
+        return Collections.unmodifiableList(new ArrayList<String>(occupantsMap.keySet()));
     }
 
     /**
@@ -1458,10 +1526,11 @@ public class MultiUserChat {
      * Returns a collection of <code>Affiliate</code> with the room owners.
      *
      * @return a collection of <code>Affiliate</code> with the room owners.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Affiliate> getOwners() throws XMPPException {
+    public Collection<Affiliate> getOwners() throws NoResponseException, XMPPErrorException, NotConnectedException {
         return getAffiliatesByAdmin("owner");
     }
 
@@ -1469,21 +1538,23 @@ public class MultiUserChat {
      * Returns a collection of <code>Affiliate</code> with the room administrators.
      *
      * @return a collection of <code>Affiliate</code> with the room administrators.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Affiliate> getAdmins() throws XMPPException {
-        return getAffiliatesByOwner("admin");
+    public Collection<Affiliate> getAdmins() throws NoResponseException, XMPPErrorException, NotConnectedException {
+        return getAffiliatesByAdmin("admin");
     }
 
     /**
      * Returns a collection of <code>Affiliate</code> with the room members.
      *
      * @return a collection of <code>Affiliate</code> with the room members.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Affiliate> getMembers() throws XMPPException {
+    public Collection<Affiliate> getMembers() throws NoResponseException, XMPPErrorException, NotConnectedException  {
         return getAffiliatesByAdmin("member");
     }
 
@@ -1491,38 +1562,12 @@ public class MultiUserChat {
      * Returns a collection of <code>Affiliate</code> with the room outcasts.
      *
      * @return a collection of <code>Affiliate</code> with the room outcasts.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Affiliate> getOutcasts() throws XMPPException {
+    public Collection<Affiliate> getOutcasts() throws NoResponseException, XMPPErrorException, NotConnectedException {
         return getAffiliatesByAdmin("outcast");
-    }
-
-    /**
-     * Returns a collection of <code>Affiliate</code> that have the specified room affiliation
-     * sending a request in the owner namespace.
-     *
-     * @param affiliation the affiliation of the users in the room.
-     * @return a collection of <code>Affiliate</code> that have the specified room affiliation.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
-     */
-    private Collection<Affiliate> getAffiliatesByOwner(String affiliation) throws XMPPException {
-        MUCOwner iq = new MUCOwner();
-        iq.setTo(room);
-        iq.setType(IQ.Type.GET);
-        // Set the specified affiliation. This may request the list of owners/admins/members/outcasts.
-        MUCOwner.Item item = new MUCOwner.Item(affiliation);
-        iq.addItem(item);
-
-        MUCOwner answer = (MUCOwner) connection.createPacketCollectorAndSend(iq).nextResultOrThrow();
-
-        // Get the list of affiliates from the server's answer
-        List<Affiliate> affiliates = new ArrayList<Affiliate>();
-        for (Iterator<MUCOwner.Item> it = answer.getItems(); it.hasNext();) {
-            affiliates.add(new Affiliate(it.next()));
-        }
-        return affiliates;
     }
 
     /**
@@ -1531,10 +1576,11 @@ public class MultiUserChat {
      *
      * @param affiliation the affiliation of the users in the room.
      * @return a collection of <code>Affiliate</code> that have the specified room affiliation.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    private Collection<Affiliate> getAffiliatesByAdmin(String affiliation) throws XMPPException {
+    private Collection<Affiliate> getAffiliatesByAdmin(String affiliation) throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.GET);
@@ -1546,8 +1592,8 @@ public class MultiUserChat {
 
         // Get the list of affiliates from the server's answer
         List<Affiliate> affiliates = new ArrayList<Affiliate>();
-        for (Iterator<MUCAdmin.Item> it = answer.getItems(); it.hasNext();) {
-            affiliates.add(new Affiliate(it.next()));
+        for (MUCAdmin.Item mucadminItem : answer.getItems()) {
+            affiliates.add(new Affiliate(mucadminItem));
         }
         return affiliates;
     }
@@ -1556,21 +1602,23 @@ public class MultiUserChat {
      * Returns a collection of <code>Occupant</code> with the room moderators.
      *
      * @return a collection of <code>Occupant</code> with the room moderators.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Occupant> getModerators() throws XMPPException {
+    public Collection<Occupant> getModerators() throws NoResponseException, XMPPErrorException, NotConnectedException {
         return getOccupants("moderator");
     }
 
     /**
      * Returns a collection of <code>Occupant</code> with the room participants.
-     *
+     * 
      * @return a collection of <code>Occupant</code> with the room participants.
-     * @throws XMPPException if an error occured while performing the request to the server or you
-     *         don't have enough privileges to get this information.
+     * @throws XMPPErrorException if you don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public Collection<Occupant> getParticipants() throws XMPPException {
+    public Collection<Occupant> getParticipants() throws NoResponseException, XMPPErrorException, NotConnectedException {
         return getOccupants("participant");
     }
 
@@ -1579,10 +1627,12 @@ public class MultiUserChat {
      *
      * @param role the role of the occupant in the room.
      * @return a collection of <code>Occupant</code> that have the specified room role.
-     * @throws XMPPException if an error occured while performing the request to the server or you
+     * @throws XMPPErrorException if an error occured while performing the request to the server or you
      *         don't have enough privileges to get this information.
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    private Collection<Occupant> getOccupants(String role) throws XMPPException {
+    private Collection<Occupant> getOccupants(String role) throws NoResponseException, XMPPErrorException, NotConnectedException {
         MUCAdmin iq = new MUCAdmin();
         iq.setTo(room);
         iq.setType(IQ.Type.GET);
@@ -1593,8 +1643,8 @@ public class MultiUserChat {
         MUCAdmin answer = (MUCAdmin) connection.createPacketCollectorAndSend(iq).nextResultOrThrow();
         // Get the list of participants from the server's answer
         List<Occupant> participants = new ArrayList<Occupant>();
-        for (Iterator<MUCAdmin.Item> it = answer.getItems(); it.hasNext();) {
-            participants.add(new Occupant(it.next()));
+        for (MUCAdmin.Item mucadminItem : answer.getItems()) {
+            participants.add(new Occupant(mucadminItem));
         }
         return participants;
     }
@@ -1604,8 +1654,9 @@ public class MultiUserChat {
      *
      * @param text the text of the message to send.
      * @throws XMPPException if sending the message fails.
+     * @throws NotConnectedException 
      */
-    public void sendMessage(String text) throws XMPPException {
+    public void sendMessage(String text) throws XMPPException, NotConnectedException {
         Message message = new Message(room, Message.Type.groupchat);
         message.setBody(text);
         connection.sendPacket(message);
@@ -1623,7 +1674,7 @@ public class MultiUserChat {
      * @return new Chat for sending private messages to a given room occupant.
      */
     public Chat createPrivateChat(String occupant, MessageListener listener) {
-        return connection.getChatManager().createChat(occupant, listener);
+        return ChatManager.getInstanceFor(connection).createChat(occupant, listener);
     }
 
     /**
@@ -1640,8 +1691,9 @@ public class MultiUserChat {
      *
      * @param message the message.
      * @throws XMPPException if sending the message fails.
+     * @throws NotConnectedException 
      */
-    public void sendMessage(Message message) throws XMPPException {
+    public void sendMessage(Message message) throws XMPPException, NotConnectedException {
         connection.sendPacket(message);
     }
 
@@ -1688,7 +1740,7 @@ public class MultiUserChat {
      * group chat. Only "group chat" messages addressed to this group chat will
      * be delivered to the listener. If you wish to listen for other packets
      * that may be associated with this group chat, you should register a
-     * PacketListener directly with the Connection with the appropriate
+     * PacketListener directly with the XMPPConnection with the appropriate
      * PacketListener.
      *
      * @param listener a packet listener.
@@ -1716,16 +1768,18 @@ public class MultiUserChat {
      * allow a mere participant or even a visitor to change the subject.
      *
      * @param subject the new room's subject to set.
-     * @throws XMPPException if someone without appropriate privileges attempts to change the
+     * @throws XMPPErrorException if someone without appropriate privileges attempts to change the
      *          room subject will throw an error with code 403 (i.e. Forbidden)
+     * @throws NoResponseException if there was no response from the server.
+     * @throws NotConnectedException 
      */
-    public void changeSubject(final String subject) throws XMPPException {
+    public void changeSubject(final String subject) throws NoResponseException, XMPPErrorException, NotConnectedException {
         Message message = new Message(room, Message.Type.groupchat);
         message.setSubject(subject);
         // Wait for an error or confirmation message back from the server.
         PacketFilter responseFilter =
             new AndFilter(
-                new FromMatchesFilter(room),
+                FromMatchesFilter.create(room),
                 new PacketTypeFilter(Message.class));
         responseFilter = new AndFilter(responseFilter, new PacketFilter() {
             public boolean accept(Packet packet) {
@@ -1887,7 +1941,7 @@ public class MultiUserChat {
         // Create filters
         messageFilter =
             new AndFilter(
-                new FromMatchesFilter(room),
+                FromMatchesFilter.create(room),
                 new MessageTypeFilter(Message.Type.groupchat));
         messageFilter = new AndFilter(messageFilter, new PacketFilter() {
             public boolean accept(Packet packet) {
@@ -1896,7 +1950,7 @@ public class MultiUserChat {
             }
         });
         presenceFilter =
-            new AndFilter(new FromMatchesFilter(room), new PacketTypeFilter(Presence.class));
+            new AndFilter(FromMatchesFilter.create(room), new PacketTypeFilter(Presence.class));
 
         // Create a collector for incoming messages.
         messageCollector = new ConnectionDetachedPacketCollector();
@@ -2333,21 +2387,21 @@ public class MultiUserChat {
      *
      * @author Gaston Dombiak
      */
-    private static class InvitationsMonitor implements ConnectionListener {
+    private static class InvitationsMonitor extends AbstractConnectionListener {
         // We use a WeakHashMap so that the GC can collect the monitor when the
         // connection is no longer referenced by any object.
         // Note that when the InvitationsMonitor is used, i.e. when there are InvitationListeners, it will add a
-        // PacketListener to the Connection and therefore a strong reference from the Connection to the
+        // PacketListener to the XMPPConnection and therefore a strong reference from the XMPPConnection to the
         // InvitationsMonior will exists, preventing it from beeing gc'ed. After the last InvitationListener is gone,
         // the PacketListener will get removed (cancel()) allowing the garbage collection of the InvitationsMonitor
         // instance.
-        private final static Map<Connection, WeakReference<InvitationsMonitor>> monitors =
-                new WeakHashMap<Connection, WeakReference<InvitationsMonitor>>();
+        private final static Map<XMPPConnection, WeakReference<InvitationsMonitor>> monitors =
+                new WeakHashMap<XMPPConnection, WeakReference<InvitationsMonitor>>();
 
         // We don't use a synchronized List here because it would break the semantic of (add|remove)InvitationListener
         private final List<InvitationListener> invitationsListeners =
                 new ArrayList<InvitationListener>();
-        private Connection connection;
+        private XMPPConnection connection;
         private PacketFilter invitationFilter;
         private PacketListener invitationPacketListener;
 
@@ -2357,7 +2411,7 @@ public class MultiUserChat {
          * @param conn the connection to monitor for room invitations.
          * @return a new or existing InvitationsMonitor for a given connection.
          */
-        public static InvitationsMonitor getInvitationsMonitor(Connection conn) {
+        public static InvitationsMonitor getInvitationsMonitor(XMPPConnection conn) {
             synchronized (monitors) {
                 if (!monitors.containsKey(conn) || monitors.get(conn).get() == null) {
                     // We need to use a WeakReference because the monitor references the
@@ -2378,7 +2432,7 @@ public class MultiUserChat {
          * 
          * @param connection the connection to monitor for possible room invitations
          */
-        private InvitationsMonitor(Connection connection) {
+        private InvitationsMonitor(XMPPConnection connection) {
             this.connection = connection;
         }
 
@@ -2442,24 +2496,9 @@ public class MultiUserChat {
             }
         }
 
+        @Override
         public void connectionClosed() {
             cancel();
-        }
-
-        public void connectionClosedOnError(Exception e) {
-            // ignore              
-        }
-
-        public void reconnectingIn(int seconds) {
-            // ignore
-        }
-
-        public void reconnectionSuccessful() {
-            // ignore
-        }
-
-        public void reconnectionFailed(Exception e) {
-            // ignore
         }
 
         /**

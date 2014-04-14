@@ -16,7 +16,6 @@
  */
 package org.jivesoftware.smack.util;
 
-import java.beans.PropertyDescriptor;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -24,12 +23,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
-import org.jivesoftware.smack.packet.Authentication;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.packet.Bind;
 import org.jivesoftware.smack.packet.DefaultPacketExtension;
 import org.jivesoftware.smack.packet.IQ;
@@ -44,7 +43,7 @@ import org.jivesoftware.smack.packet.XMPPError;
 import org.jivesoftware.smack.provider.IQProvider;
 import org.jivesoftware.smack.provider.PacketExtensionProvider;
 import org.jivesoftware.smack.provider.ProviderManager;
-import org.jivesoftware.smack.sasl.SASLMechanism.Failure;
+import org.jivesoftware.smack.sasl.SASLMechanism.SASLFailure;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -282,7 +281,7 @@ public class PacketParserUtils {
      * @return an IQ object.
      * @throws Exception if an exception occurs while parsing the packet.
      */
-    public static IQ parseIQ(XmlPullParser parser, Connection connection) throws Exception {
+    public static IQ parseIQ(XmlPullParser parser, XMPPConnection connection) throws Exception {
         IQ iqPacket = null;
 
         String id = parser.getAttributeValue("", "id");
@@ -300,9 +299,6 @@ public class PacketParserUtils {
                 String namespace = parser.getNamespace();
                 if (elementName.equals("error")) {
                     error = PacketParserUtils.parseError(parser);
-                }
-                else if (elementName.equals("query") && namespace.equals("jabber:iq:auth")) {
-                    iqPacket = parseAuthentication(parser);
                 }
                 else if (elementName.equals("query") && namespace.equals("jabber:iq:roster")) {
                     iqPacket = parseRoster(parser);
@@ -345,9 +341,9 @@ public class PacketParserUtils {
         // Decide what to do when an IQ packet was not understood
         if (iqPacket == null) {
             if (IQ.Type.GET == type || IQ.Type.SET == type ) {
-                // If the IQ stanza is of type "get" or "set" containing a child element
-                // qualified by a namespace it does not understand, then answer an IQ of
-                // type "error" with code 501 ("feature-not-implemented")
+                // If the IQ stanza is of type "get" or "set" containing a child element qualified
+                // by a namespace with no registered Smack provider, then answer an IQ of type
+                // "error" with code 501 ("feature-not-implemented")
                 iqPacket = new IQ() {
                     @Override
                     public String getChildElementXML() {
@@ -381,34 +377,6 @@ public class PacketParserUtils {
         iqPacket.setError(error);
 
         return iqPacket;
-    }
-
-    private static Authentication parseAuthentication(XmlPullParser parser) throws Exception {
-        Authentication authentication = new Authentication();
-        boolean done = false;
-        while (!done) {
-            int eventType = parser.next();
-            if (eventType == XmlPullParser.START_TAG) {
-                if (parser.getName().equals("username")) {
-                    authentication.setUsername(parser.nextText());
-                }
-                else if (parser.getName().equals("password")) {
-                    authentication.setPassword(parser.nextText());
-                }
-                else if (parser.getName().equals("digest")) {
-                    authentication.setDigest(parser.nextText());
-                }
-                else if (parser.getName().equals("resource")) {
-                    authentication.setResource(parser.nextText());
-                }
-            }
-            else if (eventType == XmlPullParser.END_TAG) {
-                if (parser.getName().equals("query")) {
-                    done = true;
-                }
-            }
-        }
-        return authentication;
     }
 
     private static RosterPacket parseRoster(XmlPullParser parser) throws Exception {
@@ -557,7 +525,7 @@ public class PacketParserUtils {
      *
      * @param parser the XML parser, positioned at the start of the compression stanza.
      * @return a collection of Stings with the methods included in the compression stanza.
-     * @throws Exception if an exception occurs while parsing the stanza.
+     * @throws XmlPullParserException if an exception occurs while parsing the stanza.
      */
     public static Collection<String> parseCompressionMethods(XmlPullParser parser)
             throws IOException, XmlPullParserException {
@@ -669,7 +637,7 @@ public class PacketParserUtils {
      * @return a SASL Failure packet.
      * @throws Exception if an exception occurs while parsing the packet.
      */
-    public static Failure parseSASLFailure(XmlPullParser parser) throws Exception {
+    public static SASLFailure parseSASLFailure(XmlPullParser parser) throws Exception {
         String condition = null;
         boolean done = false;
         while (!done) {
@@ -686,7 +654,7 @@ public class PacketParserUtils {
                 }
             }
         }
-        return new Failure(condition);
+        return new SASLFailure(condition);
     }
 
     /**
@@ -694,7 +662,7 @@ public class PacketParserUtils {
      *
      * @param parser the XML parser.
      * @return an stream error packet.
-     * @throws Exception if an exception occurs while parsing the packet.
+     * @throws XmlPullParserException if an exception occurs while parsing the packet.
      */
     public static StreamError parseStreamError(XmlPullParser parser) throws IOException,
             XmlPullParserException {
@@ -736,7 +704,6 @@ public class PacketParserUtils {
      */
     public static XMPPError parseError(XmlPullParser parser) throws Exception {
         final String errorNamespace = "urn:ietf:params:xml:ns:xmpp-stanzas";
-    	String errorCode = "-1";
         String type = null;
         String message = null;
         String condition = null;
@@ -744,9 +711,6 @@ public class PacketParserUtils {
 
         // Parse the error header
         for (int i=0; i<parser.getAttributeCount(); i++) {
-            if (parser.getAttributeName(i).equals("code")) {
-                errorCode = parser.getAttributeValue("", "code");
-            }
             if (parser.getAttributeName(i).equals("type")) {
             	type = parser.getAttributeValue("", "type");
             }
@@ -781,13 +745,13 @@ public class PacketParserUtils {
         XMPPError.Type errorType = XMPPError.Type.CANCEL;
         try {
             if (type != null) {
-                errorType = XMPPError.Type.valueOf(type.toUpperCase());
+                errorType = XMPPError.Type.valueOf(type.toUpperCase(Locale.US));
             }
         }
         catch (IllegalArgumentException iae) {
-            LOGGER.log(Level.SEVERE, "Could not find error type for " + type.toUpperCase(), iae);
+            LOGGER.log(Level.SEVERE, "Could not find error type for " + type.toUpperCase(Locale.US), iae);
         }
-        return new XMPPError(Integer.parseInt(errorCode), errorType, condition, message, extensions);
+        return new XMPPError(errorType, condition, message, extensions);
     }
 
     /**
@@ -864,14 +828,15 @@ public class PacketParserUtils {
             if (eventType == XmlPullParser.START_TAG) {
                 String name = parser.getName();
                 String stringValue = parser.nextText();
-                PropertyDescriptor descriptor = new PropertyDescriptor(name, objectClass);
-                // Load the class type of the property.
-                Class<?> propertyType = descriptor.getPropertyType();
+                Class<?> propertyType = object.getClass().getMethod(
+                                "get" + Character.toUpperCase(name.charAt(0)) + name.substring(1)).getReturnType();
                 // Get the value of the property by converting it from a
                 // String to the correct object type.
                 Object value = decode(propertyType, stringValue);
                 // Set the value of the bean.
-                descriptor.getWriteMethod().invoke(object, value);
+                object.getClass().getMethod(
+                                "set" + Character.toUpperCase(name.charAt(0)) + name.substring(1),
+                                propertyType).invoke(object, value);
             }
             else if (eventType == XmlPullParser.END_TAG) {
                 if (parser.getName().equals(elementName)) {
@@ -880,7 +845,7 @@ public class PacketParserUtils {
             }
         }
         return object;
-            }
+    }
 
     /**
      * Decodes a String into an object of the specified type. If the object

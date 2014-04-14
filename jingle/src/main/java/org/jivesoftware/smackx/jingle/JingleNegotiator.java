@@ -20,7 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
-import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.SmackException;
+import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smackx.jingle.listeners.JingleListener;
@@ -43,7 +44,7 @@ public abstract class JingleNegotiator {
 
 	private static final Logger LOGGER = Logger.getLogger(JingleNegotiator.class.getName());
 
-	//private Connection connection; // The connection associated
+	//private XMPPConnection connection; // The connection associated
 
     protected JingleSession session;
 
@@ -65,7 +66,7 @@ public abstract class JingleNegotiator {
     /**
      * Default constructor with a Connection
      *
-     * @param connection the connection associated
+     * @param session the jingle session
      */
     public JingleNegotiator(JingleSession session) {
         this.session = session;
@@ -99,7 +100,7 @@ public abstract class JingleNegotiator {
        this.state = stateIs;
     }
 
-    public Connection getConnection() {
+    public XMPPConnection getConnection() {
         if (session != null) {
             return session.getConnection();
         } else {
@@ -119,7 +120,7 @@ public abstract class JingleNegotiator {
     /**
      * Set the XMPP connection associated.
      *
-     * @param connection the connection to set
+     * @param session the jingle session
      */
     public void setSession(JingleSession session) {
         this.session = session;
@@ -140,7 +141,7 @@ public abstract class JingleNegotiator {
      * Check if the passed ID is the expected ID
      *
      * @param id
-     * @return
+     * @return true if is expected id
      */
     public boolean isExpectedId(String id) {
         if (id != null) {
@@ -232,7 +233,7 @@ public abstract class JingleNegotiator {
      * @return the new packet to send (either a Jingle or an IQ error).
      * @throws XMPPException
      */
-    public abstract List<IQ> dispatchIncomingPacket(IQ iq, String id) throws XMPPException;
+    public abstract List<IQ> dispatchIncomingPacket(IQ iq, String id) throws XMPPException, SmackException;
 
     
     public void start() {

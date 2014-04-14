@@ -17,6 +17,7 @@
 
 package org.jivesoftware.smack;
 
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.packet.Message;
 
 import java.util.Set;
@@ -86,8 +87,9 @@ public class Chat {
      *
      * @param text the text to send.
      * @throws XMPPException if sending the message fails.
+     * @throws NotConnectedException 
      */
-    public void sendMessage(String text) throws XMPPException {
+    public void sendMessage(String text) throws XMPPException, NotConnectedException {
         Message message = new Message(participant, Message.Type.chat);
         message.setThread(threadID);
         message.setBody(text);
@@ -99,9 +101,9 @@ public class Chat {
      * and message type of the message will automatically set to those of this chat.
      *
      * @param message the message to send.
-     * @throws XMPPException if an error occurs sending the message.
+     * @throws NotConnectedException 
      */
-    public void sendMessage(Message message) throws XMPPException {
+    public void sendMessage(Message message) throws NotConnectedException {
         // Force the recipient, message type, and thread ID since the user elected
         // to send the message through this chat object.
         message.setTo(participant);
@@ -129,6 +131,16 @@ public class Chat {
     }
 
     /**
+     * Closes the Chat and removes all references to it from the {@link ChatManager}. The chat will
+     * be unusable when this method returns, so it's recommend to drop all references to the
+     * instance right after calling {@link #close()}.
+     */
+    public void close() {
+        chatManager.closeChat(this);
+        listeners.clear();
+    }
+
+    /**
      * Returns an unmodifiable collection of all of the listeners registered with this chat.
      *
      * @return an unmodifiable collection of all of the listeners registered with this chat.
@@ -151,7 +163,7 @@ public class Chat {
     /**
      * Delivers a message directly to this chat, which will add the message
      * to the collector and deliver it to all listeners registered with the
-     * Chat. This is used by the Connection class to deliver messages
+     * Chat. This is used by the XMPPConnection class to deliver messages
      * without a thread ID.
      *
      * @param message the message.

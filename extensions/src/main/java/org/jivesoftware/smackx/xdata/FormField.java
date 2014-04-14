@@ -18,10 +18,10 @@
 package org.jivesoftware.smackx.xdata;
 
 import org.jivesoftware.smack.util.StringUtils;
+import org.jivesoftware.smack.util.XmlStringBuilder;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -94,14 +94,14 @@ public class FormField {
     }
 
     /**
-     * Returns an Iterator for the available options that the user has in order to answer
+     * Returns a List of the available options that the user has in order to answer
      * the question.
      *
-     * @return Iterator for the available options.
+     * @return List of the available options.
      */
-    public Iterator<Option> getOptions() {
+    public List<Option> getOptions() {
         synchronized (options) {
-            return Collections.unmodifiableList(new ArrayList<Option>(options)).iterator();
+            return Collections.unmodifiableList(new ArrayList<Option>(options));
         }
     }
 
@@ -140,15 +140,15 @@ public class FormField {
     }
 
     /**
-     * Returns an Iterator for the default values of the question if the question is part
-     * of a form to fill out. Otherwise, returns an Iterator for the answered values of
+     * Returns a List of the default values of the question if the question is part
+     * of a form to fill out. Otherwise, returns a List of the answered values of
      * the question.
      *
-     * @return an Iterator for the default values or answered values of the question.
+     * @return a List of the default values or answered values of the question.
      */
-    public Iterator<String> getValues() {
+    public List<String> getValues() {
         synchronized (values) {
-            return Collections.unmodifiableList(new ArrayList<String>(values)).iterator();
+            return Collections.unmodifiableList(new ArrayList<String>(values));
         }
     }
 
@@ -264,15 +264,13 @@ public class FormField {
     }
 
     public String toXML() {
-        StringBuilder buf = new StringBuilder();
+        XmlStringBuilder buf = new XmlStringBuilder();
         buf.append("<field");
         // Add attributes
         if (getLabel() != null) {
             buf.append(" label=\"").append(getLabel()).append("\"");
         }
-        if (getVariable() != null) {
-            buf.append(" var=\"").append(getVariable()).append("\"");
-        }
+        buf.attribute("var", getVariable());
         if (getType() != null) {
             buf.append(" type=\"").append(getType()).append("\"");
         }
@@ -285,12 +283,12 @@ public class FormField {
             buf.append("<required/>");
         }
         // Loop through all the values and append them to the string buffer
-        for (Iterator<String> i = getValues(); i.hasNext();) {
-            buf.append("<value>").append(i.next()).append("</value>");
+        for (String value : getValues()) {
+            buf.element("value", value);
         }
         // Loop through all the values and append them to the string buffer
-        for (Iterator<Option> i = getOptions(); i.hasNext();) {
-            buf.append((i.next()).toXML());
+        for (Option option : getOptions()) {
+            buf.append(option.toXML());
         }
         buf.append("</field>");
         return buf.toString();

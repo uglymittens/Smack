@@ -14,10 +14,10 @@ Key Advantages :
   - Extremely simple to use, yet powerful API. Sending a text message to a user can be accomplished in only a few lines of code:
 
     ```java
-    Connection connection = new XMPPConnection("jabber.org");
+    XMPPConnection connection = new XMPPTCPConnection("jabber.org");
     connection.connect();
     connection.login("mtucker", "password");
-    Chat chat = connection.getChatManager()
+    Chat chat = ChatManager.getInstanceFor(connection)
         .createChat("jsmith@jivesoftware.com", new MessageListener() {
 
         public void processMessage(Chat chat, Message message) {
@@ -67,6 +67,8 @@ Resources
 
 - Bug Tracker: http://issues.igniterealtime.org/browse/SMACK
 - Nightly Builds: http://www.igniterealtime.org/downloads/nightly_smack.jsp
+- Nightly Javadoc: http://www.igniterealtime.org/builds/smack/dailybuilds/javadoc/
+- Nightly Documentation: http://www.igniterealtime.org/builds/smack/dailybuilds/documentation/
 - User Forum: http://community.igniterealtime.org/community/support/smack_users
 - Dev Forum: http://community.igniterealtime.org/community/developers/smack
 - Snapshots: https://oss.sonatype.org/content/repositories/snapshots/org/igniterealtime/smack/
